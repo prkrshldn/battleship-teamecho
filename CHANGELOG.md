@@ -1,0 +1,47 @@
+# Battleship Project Change Log
+
+## 1. Frontend Design & Layout
+**Goal:** Create a visual grid and game layout.
+**Files Changed:**
+*   `frontend/src/style.css`
+
+**Key Changes:**
+*   **Grid System:** Added CSS Grid styles (`.board` class) to create dynamic 10x10 grids.
+*   **Cell Styling:** Styled individual cells (`.cell`) with colors for ships (blue), hits (red), and misses (faded white).
+*   **Layout:** Created a split-pane layout with a "Setup/Status" panel on the left and "Player vs Opponent" boards on the right.
+*   **Dark Mode Fix:** Forced text color to white in the side panel to ensure readability against the dark background.
+
+## 2. Backend Multiplayer Logic
+**Goal:** Enable server-side management of rooms and game state.
+**Files Changed:**
+*   `backend/index.js`
+
+**Key Changes:**
+*   **Room Management:** Implemented `rooms` object to store game sessions in memory.
+*   **Event: `join`:** Handles players joining a specific room code and assigning them an ID.
+*   **Event: `place_ships`:** Receives ship layouts from the frontend and waits for both players to be "Ready".
+*   **Event: `fire`:** Validates shots, checks for hits against the stored board, and switches turns.
+*   **Game Loop:** built the core turn-swapping mechanism.
+
+## 3. Frontend Integration
+**Goal:** Connect the UI to the Backend logic.
+**Files Changed:**
+*   `frontend/src/pages/game.js`
+
+**Key Changes:**
+*   **Socket Connection:** Updated `renderGame` to connect to the server using the room code logic.
+*   **Real-time Updates:** Added listeners for `game_start` and `shot_result` to update the UI instantly.
+*   **Interactive Logic:**
+    *   Clicking "Ready" now sends the ship grid to the server.
+    *   Clicking the opponent's board now sends a "Fire" command.
+    *   Status text updates to show "Waiting for opponent", "Your Turn", etc.
+
+## 4. Bug Fixes & Polish
+**Goal:** Fix logical errors and improve user experience during setup.
+**Files Changed:**
+*   `frontend/src/pages/game.js`
+
+**Key Changes:**
+*   **Unique Ship Placement:** Fixed a bug where players could place the same ship multiple times. The game now checks for the specific ship key (e.g., 'carrier', 'submarine') before placement.
+*   **Smart Dropdown:** Implemented logic to disable ship options in the dropdown once they are placed.
+*   **Auto-Select:** The dropdown now automatically selects the next available ship after a successful placement.
