@@ -115,9 +115,11 @@ io.on('connection', (socket) => {
     // Check Win Condition (simplified: is every '1' now hit? 
     // real logic requires tracking hits, but for now we just play)
 
-    // Switch turn
-    room.turn = opponentId;
-    io.to(code).emit('turn_change', { turn: room.turn });
+    // Switch turn only if miss (isHit == false)
+    if (isHit == false) {
+      room.turn = opponentId;
+      io.to(code).emit('turn_change', { turn: room.turn });
+    }
   });
 
   socket.on('disconnect', () => {

@@ -1,6 +1,7 @@
 import { state } from "../state";
 import { createBoard } from "../components/board";
 import { socket } from "../socket";
+import { getShipInfo } from "../util/shipGetInfo";
 
 export function renderGame(root, { roomId }) {
   const el = document.createElement("div");
@@ -103,17 +104,6 @@ export function renderGame(root, { roomId }) {
     status.textContent = msg;
   }
 
-  function getShipInfo() {
-    const v = shipSelect.value;
-    // Map values to keys
-    if (v === "5") return { key: "carrier", len: 5 };
-    if (v === "4") return { key: "battleship", len: 4 };
-    if (v === "3") return { key: "cruiser", len: 3 };
-    if (v === "3b") return { key: "submarine", len: 3 };
-    if (v === "2") return { key: "destroyer", len: 2 };
-    return null;
-  }
-
   function markPlaced(key) {
     placed.add(key);
 
@@ -175,11 +165,11 @@ export function renderGame(root, { roomId }) {
   socket.on('shot_result', (data) => {
     // data = { shooter, r, c, hit }
     const iShot = data.shooter === socket.id;
-
     if (iShot) {
       // I shot at opponent
       opp.markShot(data.r, data.c, data.hit ? "hit" : "miss");
       updateStatus(data.hit ? "Direct HIT!" : "Missed!");
+      console.log(`Shot at (${data.r}, ${data.c}) was a ${data.hit}`);
     } else {
       // Opponent shot at me
       my.markShot(data.r, data.c, data.hit ? "hit" : "miss");
@@ -209,7 +199,7 @@ export function renderGame(root, { roomId }) {
   my.onCellClick((r, c) => {
     if (gameActive) return; // Can't place during game
 
-    const info = getShipInfo();
+    const info = getShipInfo(shipSelect);
     if (!info) return;
 
     if (placed.has(info.key)) {
@@ -217,7 +207,7 @@ export function renderGame(root, { roomId }) {
       return;
     }
 
-    const ok = my.placeShip({ r, c, len: info.len, horizontal });
+    const ok = my.placeShip({ r, c, len: info.len, horizontal, name: info.key });
     if (ok) markPlaced(info.key);
     else updateStatus("Invalid placement.");
   });

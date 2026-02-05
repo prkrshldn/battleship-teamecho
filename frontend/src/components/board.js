@@ -1,10 +1,12 @@
+import { getShipInfo } from "../util/shipGetInfo";
+
 export function createBoard({ size = 10, mode = "place" }) {
   const el = document.createElement("div");
   el.className = `board board-${mode}`;
 
   // 0 = empty, 1 = ship, 2 = miss, 3 = hit
   const grid = Array.from({ length: size }, () => Array(size).fill(0));
-
+  const shipSelect = document.querySelector("#ship");
   let clickHandler = null;
 
   function render() {
@@ -21,7 +23,10 @@ export function createBoard({ size = 10, mode = "place" }) {
 
         const v = grid[r][c];
 
-        if (v === 1) cell.classList.add("ship");
+        if (v === 1) {
+          cell.classList.add("ship");
+          cell.name = getShipInfo(shipSelect)?.key || "";
+        }
         if (v === 2) cell.classList.add("miss");
         if (v === 3) cell.classList.add("hit");
 
@@ -63,12 +68,13 @@ export function createBoard({ size = 10, mode = "place" }) {
     }
   }
 
-  function placeShip({ r, c, len, horizontal }) {
+  function placeShip({ r, c, len, horizontal, name }) {
     if (!canPlace({ r, c, len, horizontal })) return false;
 
     if (horizontal) {
       for (let i = 0; i < len; i++) {
         grid[r][c + i] = 1;
+        console.log(`Placing part of ship ${name} at (${r}, ${c + i})`);
       }
     } else {
       for (let i = 0; i < len; i++) {
