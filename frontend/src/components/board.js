@@ -8,6 +8,7 @@ export function createBoard({ size = 10, mode = "place" }) {
   const grid = Array.from({ length: size }, () => Array(size).fill(0));
   const shipSelect = document.querySelector("#ship");
   let clickHandler = null;
+  const ships = []; // Store placed ships details { name, len, coords: [] }
 
   function render() {
     el.innerHTML = "";
@@ -29,6 +30,11 @@ export function createBoard({ size = 10, mode = "place" }) {
         }
         if (v === 2) cell.classList.add("miss");
         if (v === 3) cell.classList.add("hit");
+        if (v === 4) {
+          cell.classList.add("ship");
+          cell.classList.add("hit");
+          cell.classList.add("sunk"); // Add sunk style
+        }
 
         cell.addEventListener("click", () => {
           if (clickHandler) clickHandler(r, c);
@@ -45,6 +51,7 @@ export function createBoard({ size = 10, mode = "place" }) {
         grid[r][c] = 0;
       }
     }
+    ships.length = 0; // Clear ships
     render();
   }
 
@@ -71,16 +78,22 @@ export function createBoard({ size = 10, mode = "place" }) {
   function placeShip({ r, c, len, horizontal, name }) {
     if (!canPlace({ r, c, len, horizontal })) return false;
 
+    const newShip = { name, len, coords: [] };
+
     if (horizontal) {
       for (let i = 0; i < len; i++) {
         grid[r][c + i] = 1;
+        newShip.coords.push({ r, c: c + i });
         console.log(`Placing part of ship ${name} at (${r}, ${c + i})`);
       }
     } else {
       for (let i = 0; i < len; i++) {
         grid[r + i][c] = 1;
+        newShip.coords.push({ r: r + i, c });
       }
     }
+
+    ships.push(newShip);
 
     render();
     return true;
@@ -93,8 +106,28 @@ export function createBoard({ size = 10, mode = "place" }) {
     render();
   }
 
+  function markSunk(shipName) {
+    // Find the ship
+    const ship = ships.find(s => s.name === shipName);
+    if (!ship) return;
+
+    // Mark all its cells as sunk (visually, maybe state 4?)
+    // For now we can just rely on adding a class in render, but 
+    // let's update grid state to 4 for 'sunk'? 
+    // Or just find the elements and add class? 
+    // Let's update grid to 4 so it persists on re-render.
+    ship.coords.forEach(({ r, c }) => {
+      grid[r][c] = 4; // 4 = sunk
+    });
+    render();
+  }
+
   function onCellClick(fn) {
     clickHandler = fn;
+  }
+
+  function getShips() {
+    return ships;
   }
 
   render();
@@ -102,10 +135,12 @@ export function createBoard({ size = 10, mode = "place" }) {
   return {
     el,
     grid,
+    getShips,
     clear,
     canPlace,
     placeShip,
     markShot,
+    markSunk,
     onCellClick,
   };
 }

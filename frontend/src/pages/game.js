@@ -68,6 +68,17 @@ export function renderGame(root, { roomId }) {
           <div id="oppBoard"></div>
         </div>
       </div>
+
+      <div class="panel fleet-status" id="fleet-panel" style="visibility: hidden;">
+        <h3>Enemy Fleet</h3>
+        <div style="margin-bottom: 10px; font-size: 0.9rem; color: #ccc;">
+          <span style="margin-right: 15px;">Hits: <strong id="hit-count" style="color: #ff4444;">0</strong></span>
+          <span>Misses: <strong id="miss-count" style="color: #fff;">0</strong></span>
+        </div>
+        <div id="enemy-fleet" class="ship-list">
+          <!-- Populated by JS -->
+        </div>
+      </div>
     </div>
   `;
 
@@ -84,11 +95,17 @@ export function renderGame(root, { roomId }) {
   let horizontal = true;
   let isMyTurn = false;
   let gameActive = false;
+  let myHits = 0;
+  let myMisses = 0;
 
   const shipSelect = el.querySelector("#ship");
   const status = el.querySelector("#status");
   const debug = el.querySelector("#debug");
   const setupPanel = el.querySelector("#setup-controls");
+  const fleetPanel = el.querySelector("#fleet-panel");
+  const enemyFleetList = el.querySelector("#enemy-fleet");
+  const hitCountEl = el.querySelector("#hit-count");
+  const missCountEl = el.querySelector("#miss-count");
 
   const shipsToPlace = [
     { key: "carrier", len: 5 },
@@ -146,10 +163,24 @@ export function renderGame(root, { roomId }) {
     }
   });
 
+  // Render initial enemy fleet (hidden)
+  function renderEnemyFleet() {
+    enemyFleetList.innerHTML = '';
+    shipsToPlace.forEach(ship => {
+      const div = document.createElement('div');
+      div.className = 'ship-item';
+      div.id = `enemy-ship-${ship.key}`;
+      div.innerHTML = `<span>${ship.key}</span> <span>${ship.len}</span>`;
+      enemyFleetList.appendChild(div);
+    });
+  }
+  renderEnemyFleet();
+
   socket.on('game_start', (data) => {
     gameActive = true;
     setupPanel.style.display = 'none'; // Hide setup controls
     setupPanel.style.pointerEvents = 'none';
+    fleetPanel.style.visibility = 'visible'; // Show fleet status
 
     isMyTurn = data.turn === socket.id;
     updateStatus(isMyTurn ? "Game Started! YOUR TURN. Fire!" : "Game Started! Opponent's turn.");
@@ -168,11 +199,39 @@ export function renderGame(root, { roomId }) {
     if (iShot) {
       // I shot at opponent
       opp.markShot(data.r, data.c, data.hit ? "hit" : "miss");
-      updateStatus(data.hit ? "Direct HIT!" : "Missed!");
+
+      // Update counters
+      if (data.hit) {
+        myHits++;
+        hitCountEl.textContent = myHits;
+        updateStatus("Direct HIT!");
+      } else {
+        myMisses++;
+        missCountEl.textContent = myMisses;
+        updateStatus("Missed!");
+      }
+
       console.log(`Shot at (${data.r}, ${data.c}) was a ${data.hit}`);
     } else {
       // Opponent shot at me
       my.markShot(data.r, data.c, data.hit ? "hit" : "miss");
+    }
+
+    if (data.sunk) {
+      const iSunkIt = data.shooter === socket.id;
+      if (iSunkIt) {
+        // I sunk opponent's ship
+        updateStatus(`YOU SUNK THEIR ${data.sunk.toUpperCase()}!`);
+        const shipEl = el.querySelector(`#enemy-ship-${data.sunk}`);
+        if (shipEl) {
+          shipEl.classList.add('sunk');
+        }
+      } else {
+        // My ship was sunk
+        updateStatus(`YOUR ${data.sunk.toUpperCase()} WAS SUNK!`);
+        // Mark on my board
+        my.markSunk(data.sunk);
+      }
     }
   });
 
@@ -226,7 +285,8 @@ export function renderGame(root, { roomId }) {
     // Send valid board to server
     socket.emit('place_ships', {
       roomCode: code,
-      grid: my.grid
+      grid: my.grid,
+      ships: my.getShips()
     });
   });
 

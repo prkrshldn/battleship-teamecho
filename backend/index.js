@@ -54,13 +54,15 @@ io.on('connection', (socket) => {
   });
 
   // 2. Place Ships (Ready)
-  socket.on('place_ships', ({ roomCode, grid }) => {
+  socket.on('place_ships', ({ roomCode, grid, ships }) => {
     const code = roomCode.toUpperCase();
     const room = rooms[code];
     if (!room) return;
 
     if (room.players[socket.id]) {
       room.players[socket.id].board = grid; // Store the secret board
+      // store ships: [ { name, len, hits: 0, coords: [{r,c}, ...] } ]
+      room.players[socket.id].ships = ships.map(s => ({ ...s, hits: 0 }));
       room.players[socket.id].ready = true;
     }
 
@@ -105,11 +107,28 @@ io.on('connection', (socket) => {
     // Mark shot to prevent duplicates
     opponent.shotsReceived[r][c] = 1;
 
+    // Track ship damage
+    let sunkShipName = null;
+    if (isHit) {
+      // Find which ship was hit
+      const ship = opponent.ships.find(s =>
+        s.coords.some(coord => coord.r === r && coord.c === c)
+      );
+
+      if (ship) {
+        ship.hits += 1;
+        if (ship.hits === ship.len) {
+          sunkShipName = ship.name;
+        }
+      }
+    }
+
     // Send result to EVERYONE
     io.to(code).emit('shot_result', {
       shooter: socket.id,
       r, c,
-      hit: isHit
+      hit: isHit,
+      sunk: sunkShipName
     });
 
     // Check Win Condition (simplified: is every '1' now hit? 
