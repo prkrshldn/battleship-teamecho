@@ -57,8 +57,8 @@ battleship-teamecho/
 Clone the repository:
 
 ```
-git clone https://github.com/<YOUR-ORG-OR-USER>/<YOUR-REPO>.git
-cd <YOUR-REPO>
+git clone https://github.com/prkrshldn/battleship-teamecho.git
+cd battleship-teamecho
 ```
 
 ---
