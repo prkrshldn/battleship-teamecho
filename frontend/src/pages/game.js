@@ -420,6 +420,9 @@ export function renderGame(root, { roomId }) {
   window.addEventListener(
     "hashchange",
     () => {
+      const modal = document.querySelector(".modal");
+      if (modal) modal.remove();
+
       socket.off("room_update");
       socket.off("game_start");
       socket.off("turn_change");
