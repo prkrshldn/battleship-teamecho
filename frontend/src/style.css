@@ -60,6 +60,8 @@ h1 {
 
 .card {
   padding: 2em;
+  background-color: #333399;
+  border-radius: 1em;
 }
 
 .read-the-docs {
@@ -201,7 +203,7 @@ button:focus-visible {
 }
 
 .muted {
-  color: #888;
+  color: #affaff;
 }
 
 .tiny {
@@ -214,7 +216,7 @@ button:focus-visible {
 
 .hr {
   height: 1px;
-  background: #444;
+  background: #ccc;
   margin: 1.5rem 0;
 }
 
@@ -348,4 +350,122 @@ button:focus-visible {
   .summary-grid {
     grid-template-columns: 1fr;
   }
+}
+
+/* --- Authentication Form --- */
+.form-container {
+  width: min(400px, calc(100vw - 32px));
+  margin: 0 auto;
+  padding: 2rem;
+}
+
+.auth-form {
+  background: #1a1a1a;
+  border: 1px solid #333;
+  border-radius: 8px;
+  padding: 2rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+}
+
+.mode-toggle {
+  display: flex;
+  gap: 0.5rem;
+  margin-bottom: 1rem;
+}
+
+.mode-btn {
+  flex: 1;
+  padding: 0.75rem;
+  border: 1px solid #444;
+  background: transparent;
+  color: #aaa;
+  font-weight: 600;
+  cursor: pointer;
+  border-radius: 4px;
+  transition: all 0.2s;
+}
+
+.mode-btn:hover {
+  background: #222;
+}
+
+.mode-btn.active {
+  background: #646cff;
+  color: white;
+  border-color: #646cff;
+}
+
+.auth-form label {
+  display: block;
+  margin-bottom: 0.5rem;
+  font-weight: 600;
+  color: #ccc;
+}
+
+.auth-form input {
+  width: 100%;
+  padding: 0.75rem;
+  border-radius: 4px;
+  border: 1px solid #444;
+  background: #222;
+  color: white;
+  font-size: 1rem;
+  margin-bottom: 1rem;
+  box-sizing: border-box;
+}
+
+.auth-form input:focus {
+  outline: none;
+  border-color: #646cff;
+  background: #252525;
+}
+
+.auth-form button {
+  padding: 0.75rem;
+  background: #646cff;
+  color: white;
+  border: none;
+  border-radius: 4px;
+  font-weight: 600;
+  font-size: 1rem;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.auth-form button:hover:not(:disabled) {
+  background: #535bf2;
+}
+
+.auth-form button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.error-message {
+  padding: 1rem;
+  background: #a42c2c;
+  color: #ff9999;
+  border-radius: 4px;
+  font-size: 0.9rem;
+  margin-top: 0.5rem;
+}
+
+.settings {
+    display: flex;
+    border-radius: 50%;
+    justify-content: center;
+    align-items: center;
+    font-size: larger;
+    animation: none;
+}
+
+.settings:hover {
+    animation: forwards spin 2s linear infinite;
+}
+
+@keyframes spin {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
 }

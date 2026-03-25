@@ -1,18 +1,279 @@
+require("dotenv").config();
 const express = require("express");
+const cors = require("cors");
 const { createServer } = require("node:http");
 const { Server } = require("socket.io");
+const { createClient } = require("@supabase/supabase-js");
+
+const FRONTEND_ORIGIN = process.env.FRONTEND_ORIGIN || "http://localhost:5173";
+const AUTH_COOKIE_NAME = "auth_token";
+const PORT = Number(process.env.PORT || 9999);
+
+function isHttpsRequest(req) {
+  if (process.env.COOKIE_SECURE === "true") return true;
+  if (process.env.COOKIE_SECURE === "false") return false;
+  return req.protocol === "https" || req.headers["x-forwarded-proto"] === "https";
+}
+
+function parseCookies(cookieHeader = "") {
+  const pairs = cookieHeader.split(";").map((item) => item.trim()).filter(Boolean);
+  const out = {};
+
+  for (const pair of pairs) {
+    const idx = pair.indexOf("=");
+    if (idx < 0) continue;
+
+    const key = pair.slice(0, idx);
+    const value = pair.slice(idx + 1);
+    out[key] = decodeURIComponent(value);
+  }
+
+  return out;
+}
+
+function getCookieToken(req) {
+  const cookies = parseCookies(req.headers.cookie || "");
+  return cookies[AUTH_COOKIE_NAME] || null;
+}
+
+function setAuthCookie(res, req, token, expiresInSeconds = 60 * 60 * 24 * 7) {
+  const maxAge = Number.isFinite(expiresInSeconds)
+    ? Math.max(0, Math.floor(expiresInSeconds))
+    : 60 * 60 * 24 * 7;
+
+  res.cookie(AUTH_COOKIE_NAME, token, {
+    httpOnly: true,
+    secure: isHttpsRequest(req),
+    sameSite: "lax",
+    path: "/",
+    maxAge: maxAge * 1000,
+  });
+}
+
+function clearAuthCookie(res, req) {
+  res.clearCookie(AUTH_COOKIE_NAME, {
+    httpOnly: true,
+    secure: isHttpsRequest(req),
+    sameSite: "lax",
+    path: "/",
+  });
+}
 
 const app = express();
 const server = createServer(app);
 const io = new Server(server, {
   cors: {
-    origin: "http://localhost:5173",
+    origin: FRONTEND_ORIGIN,
+    credentials: true,
     methods: ["GET", "POST"],
   },
 });
 
+// Middleware
+app.use(
+  cors({
+    origin: FRONTEND_ORIGIN,
+    credentials: true,
+  }),
+);
+app.use(express.json());
+
+// Supabase client
+const supabaseUrl = process.env.SUPABASE_URL;
+const supabaseAnonKey = process.env.SUPABASE_ANON_KEY;
+const supabaseServiceKey = process.env.SUPABASE_SERVICE_KEY;
+
+const supabase = createClient(supabaseUrl, supabaseAnonKey);
+const supabaseAdmin = supabaseServiceKey ? createClient(supabaseUrl, supabaseServiceKey) : null;
+
+function createUserScopedClient(token) {
+  return createClient(supabaseUrl, supabaseAnonKey, {
+    global: {
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    },
+  });
+}
+
+// Auth middleware to verify JWT token from HttpOnly cookie
+async function verifyAuth(req, res, next) {
+  const token = getCookieToken(req);
+  if (!token) {
+    return res.status(401).json({ error: "Missing token" });
+  }
+
+  try {
+    const { data, error } = await supabase.auth.getUser(token);
+    if (error) {
+      return res.status(401).json({ error: "Invalid token" });
+    }
+    req.user = data.user;
+    req.accessToken = token;
+    next();
+  } catch (err) {
+    res.status(401).json({ error: "Auth failed" });
+  }
+}
+
 app.get("/", (req, res) => {
   res.send("Battleship Server Running");
+});
+
+// --- Authentication Routes ---
+app.post("/auth/signup", async (req, res) => {
+  try {
+    const { email, password, username } = req.body;
+    if (!email || !password) {
+      return res.status(400).json({ error: "Email and password required" });
+    }
+
+    if (username && (typeof username !== "string" || username.trim().length < 2 || username.trim().length > 20)) {
+      return res.status(400).json({ error: "Username must be 2-20 characters" });
+    }
+
+    const signupClient = supabaseAdmin || supabase;
+    const signupResult = supabaseAdmin
+      ? await signupClient.auth.admin.createUser({
+        email,
+        password,
+        user_metadata: username ? { username: username.trim() } : {},
+        email_confirm: true,
+      })
+      : await signupClient.auth.signUp({
+        email,
+        password,
+        options: {
+          data: username ? { username: username.trim() } : {},
+        },
+      });
+
+    const { data, error } = signupResult;
+
+    if (error) {
+      return res.status(400).json({ error: error.message });
+    }
+
+    // Ensure signup has an authenticated session so cookie can be issued.
+    const { data: sessionData, error: sessionError } = await supabase.auth.signInWithPassword({
+      email,
+      password,
+    });
+
+    if (sessionError) {
+      return res.status(400).json({ error: sessionError.message });
+    }
+
+    if (!sessionData.session?.access_token) {
+      return res.status(400).json({ error: "Signup succeeded but no session was issued" });
+    }
+
+    setAuthCookie(res, req, sessionData.session.access_token, sessionData.session.expires_in);
+    res.json({ user: sessionData.user || data.user });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post("/auth/login", async (req, res) => {
+  try {
+    const { email, password } = req.body;
+    if (!email || !password) {
+      return res.status(400).json({ error: "Email and password required" });
+    }
+
+    const { data, error } = await supabase.auth.signInWithPassword({
+      email,
+      password,
+    });
+
+    if (error) {
+      return res.status(400).json({ error: error.message });
+    }
+
+    if (!data.session?.access_token) {
+      return res.status(400).json({ error: "Login succeeded but no session was issued" });
+    }
+
+    setAuthCookie(res, req, data.session.access_token, data.session.expires_in);
+    res.json({ user: data.user });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post("/auth/logout", async (req, res) => {
+  try {
+    clearAuthCookie(res, req);
+    res.json({ message: "Logged out successfully" });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get("/auth/me", verifyAuth, (req, res) => {
+  res.json({ user: req.user });
+});
+
+app.put("/auth/username", verifyAuth, async (req, res) => {
+  try {
+    const { username } = req.body;
+    const trimmedUsername = username?.trim();
+    if (!trimmedUsername || typeof username !== "string" || trimmedUsername.length < 2 || trimmedUsername.length > 20) {
+      return res.status(400).json({ error: "Username must be 2-20 characters" });
+    }
+
+    let data;
+    let error;
+
+    if (supabaseAdmin) {
+      ({ data, error } = await supabaseAdmin.auth.admin.updateUserById(req.user.id, {
+        user_metadata: {
+          ...req.user.user_metadata,
+          username: trimmedUsername,
+        },
+      }));
+    } else {
+      const userClient = createUserScopedClient(req.accessToken);
+      ({ data, error } = await userClient.auth.updateUser({
+        data: {
+          ...req.user.user_metadata,
+          username: trimmedUsername,
+        },
+      }));
+    }
+
+    if (error) {
+      return res.status(400).json({ error: error.message });
+    }
+
+    res.json({ user: data.user });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+
+io.use(async (socket, next) => {
+  try {
+    const cookieHeader = socket.handshake.headers.cookie || "";
+    const cookies = parseCookies(cookieHeader);
+    const token = cookies[AUTH_COOKIE_NAME];
+
+    if (!token) {
+      return next(new Error("Unauthorized: missing auth cookie"));
+    }
+
+    const { data, error } = await supabase.auth.getUser(token);
+    if (error || !data.user) {
+      return next(new Error("Unauthorized: invalid auth cookie"));
+    }
+
+    socket.data.user = data.user;
+    return next();
+  } catch (err) {
+    return next(new Error("Unauthorized"));
+  }
 });
 
 // --- Game State ---
@@ -210,6 +471,6 @@ io.on("connection", (socket) => {
   });
 });
 
-server.listen(9999, () => {
-  console.log("server running at http://localhost:9999");
+server.listen(PORT, () => {
+  console.log(`server running at http://localhost:${PORT}`);
 });

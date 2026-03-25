@@ -4,7 +4,7 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "dev": "vite",
+    "dev": "vite --host",
     "build": "vite build",
     "preview": "vite preview"
   },
@@ -12,6 +12,8 @@
     "vite": "^7.2.4"
   },
   "dependencies": {
+    "@fortawesome/fontawesome-svg-core": "^7.2.0",
+    "@supabase/supabase-js": "^2.99.2",
     "socket.io-client": "^4.8.3"
   }
 }

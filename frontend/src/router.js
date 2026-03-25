@@ -1,6 +1,8 @@
 import { renderHome } from "./pages/home";
 import { renderLobby } from "./pages/lobby";
 import { renderGame } from "./pages/game";
+import { renderLogin } from "./pages/login";
+import { initializeAuth, isAuthenticated } from "./auth";
 
 function getApp() {
   const app = document.getElementById("app");
@@ -10,7 +12,7 @@ function getApp() {
 
 function parseRoute() {
   // Examples:
-  // #/ -> home
+  // #/ -> login (signed out) or home/settings (signed in)
   // #/lobby -> lobby
   // #/game/ROOM123 -> game with room
   const hash = window.location.hash || "#/";
@@ -27,7 +29,27 @@ function render() {
 
   app.innerHTML = ""; // clear
 
-  if (route === "") return renderHome(app);
+  // Root route decides where to send the user.
+  if (route === "") {
+    window.location.hash = isAuthenticated() ? "#/lobby" : "#/login";
+    return;
+  }
+
+  if (route === "login") {
+    if (isAuthenticated()) {
+      window.location.hash = "#/lobby";
+      return;
+    }
+    return renderLogin(app);
+  }
+
+  // Protect non-root routes.
+  if (!isAuthenticated()) {
+    window.location.hash = "#/login";
+    return;
+  }
+
+  if (route === "home") return renderHome(app);
   if (route === "lobby") return renderLobby(app);
   if (route === "game") return renderGame(app, { roomId: param });
 
@@ -41,7 +63,10 @@ function render() {
   `;
 }
 
-export function initRouter() {
+export async function initRouter() {
+  // Initialize auth before rendering
+  await initializeAuth();
+
   window.addEventListener("hashchange", render);
   render();
 }

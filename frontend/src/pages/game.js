@@ -1,6 +1,6 @@
 import { state } from "../state";
 import { createBoard } from "../components/board";
-import { socket } from "../socket";
+import { socket, connectSocket } from "../socket";
 import { getShipInfo } from "../util/shipGetInfo";
 
 export function renderGame(root, { roomId }) {
@@ -191,10 +191,26 @@ export function renderGame(root, { roomId }) {
   }
 
   // --- Socket Logic ---
+  const onConnect = () => {
+    socket.emit("join", code, state.playerName);
+    console.log(`${state.playerName} joining room: ${code}`);
+  };
 
-  // 1. Join Room
-  socket.emit("join", code, state.playerName);
-  console.log(`${state.playerName} joining room: ${code}`);
+  const onConnectError = () => {
+    updateStatus("Session expired. Please log in again.");
+    window.location.hash = "#/";
+  };
+
+  socket.on("connect", onConnect);
+  socket.on("connect_error", onConnectError);
+
+  if (socket.connected) {
+    onConnect();
+  } else {
+    connectSocket().catch(() => {
+      onConnectError();
+    });
+  }
 
   socket.on("room_update", (data) => {
     // data.players = [{name, ready}, ...]
@@ -428,6 +444,8 @@ export function renderGame(root, { roomId }) {
       socket.off("turn_change");
       socket.off("shot_result");
       socket.off("game_over");
+      socket.off("connect", onConnect);
+      socket.off("connect_error", onConnectError);
     },
     { once: true },
   );
