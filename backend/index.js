@@ -86,16 +86,6 @@ const supabaseServiceKey = process.env.SUPABASE_SERVICE_KEY;
 const supabase = createClient(supabaseUrl, supabaseAnonKey);
 const supabaseAdmin = supabaseServiceKey ? createClient(supabaseUrl, supabaseServiceKey) : null;
 
-function createUserScopedClient(token) {
-  return createClient(supabaseUrl, supabaseAnonKey, {
-    global: {
-      headers: {
-        Authorization: `Bearer ${token}`,
-      },
-    },
-  });
-}
-
 // Auth middleware to verify JWT token from HttpOnly cookie
 async function verifyAuth(req, res, next) {
   const token = getCookieToken(req);
@@ -223,31 +213,53 @@ app.put("/auth/username", verifyAuth, async (req, res) => {
       return res.status(400).json({ error: "Username must be 2-20 characters" });
     }
 
-    let data;
-    let error;
+    let updatedUser = null;
+    let errorMessage = null;
 
     if (supabaseAdmin) {
-      ({ data, error } = await supabaseAdmin.auth.admin.updateUserById(req.user.id, {
+      const { data, error } = await supabaseAdmin.auth.admin.updateUserById(req.user.id, {
         user_metadata: {
           ...req.user.user_metadata,
           username: trimmedUsername,
         },
-      }));
+      });
+
+      if (error) {
+        errorMessage = error.message;
+      } else {
+        updatedUser = data.user;
+      }
     } else {
-      const userClient = createUserScopedClient(req.accessToken);
-      ({ data, error } = await userClient.auth.updateUser({
-        data: {
-          ...req.user.user_metadata,
-          username: trimmedUsername,
+      // updateUser in supabase-js requires an in-memory session and can fail with
+      // "Auth session missing" in stateless server handlers. Use Auth REST directly.
+      const authResp = await fetch(`${supabaseUrl}/auth/v1/user`, {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+          apikey: supabaseAnonKey,
+          Authorization: `Bearer ${req.accessToken}`,
         },
-      }));
+        body: JSON.stringify({
+          data: {
+            ...req.user.user_metadata,
+            username: trimmedUsername,
+          },
+        }),
+      });
+
+      const authPayload = await authResp.json().catch(() => ({}));
+      if (!authResp.ok) {
+        errorMessage = authPayload?.msg || authPayload?.error_description || authPayload?.error || "Failed to update username";
+      } else {
+        updatedUser = authPayload;
+      }
     }
 
-    if (error) {
-      return res.status(400).json({ error: error.message });
+    if (errorMessage) {
+      return res.status(400).json({ error: errorMessage });
     }
 
-    res.json({ user: data.user });
+    res.json({ user: updatedUser });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
