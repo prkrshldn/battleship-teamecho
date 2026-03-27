@@ -1,4 +1,5 @@
 :root {
+  --page-content-width: 640px;
   font-family: system-ui, Avenir, Helvetica, Arial, sans-serif;
   line-height: 1.5;
   font-weight: 400;
@@ -107,12 +108,14 @@ button:focus-visible {
 /* --- App Layout --- */
 .page {
   text-align: left;
-  max-width: 1000px;
+  width: min(var(--page-content-width), calc(100vw - 32px));
+  max-width: none;
   margin: 0 auto;
 }
 
 .page.wide {
-  max-width: 1200px;
+  width: min(1200px, calc(100vw - 32px));
+  max-width: none;
 }
 
 .topbar {
@@ -128,6 +131,7 @@ button:focus-visible {
   display: flex;
   gap: 2rem;
   align-items: flex-start;
+  justify-content: center;
 }
 
 .panel {
@@ -354,9 +358,10 @@ button:focus-visible {
 
 /* --- Authentication Form --- */
 .form-container {
-  width: min(400px, calc(100vw - 32px));
+  width: 100%;
   margin: 0 auto;
   padding: 2rem;
+  box-sizing: border-box;
 }
 
 .auth-form {
@@ -465,7 +470,28 @@ button:focus-visible {
     animation: forwards spin 2s linear infinite;
 }
 
+.lobby-btn {
+    width: 100%;
+    padding: 0.5rem 1rem;
+    margin-bottom: 1em;
+    border-radius: 4px;
+    font-weight: bold;
+    border: none;
+    background: #646cff;
+    color: white;
+    cursor: pointer;
+    text-decoration: none;
+    font-size: 0.9rem;
+    transition: backgroundPulse 0.2s;
+}
+
 @keyframes spin {
     from { transform: rotate(0deg); }
     to { transform: rotate(360deg); }
+}
+
+@keyframes backgroundPulse {
+    0% { background-color: #646cff; }
+    50% { background-color: #535bf2; }
+    100% { background-color: #646cff; }
 }

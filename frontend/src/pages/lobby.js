@@ -1,7 +1,9 @@
 import { getCurrentUser, logout, updateUsername } from "../auth";
 import { state, setPlayerName, setRoomId } from "../state";
 
-export function renderLobby(root) {
+export function renderLobby(root, options = {}) {
+  const validViews = new Set(["mode", "room", "cpu"]);
+  const initialView = validViews.has(options.initialView) ? options.initialView : "mode";
   const el = document.createElement("div");
   el.className = "page";
 
@@ -17,19 +19,14 @@ export function renderLobby(root) {
         </div>
       </div>
       <div class="hr"></div>
-      <p class="muted">Create a room or join one with a code.</p>
-      <div class="grid2">
+      <p class="muted" id="lobbyMessage">Welcome to Battleship!</p>
+      <div class="grid2" id="modeOrRoomGrid">
         <div>
-          <h2>Create room</h2>
-          <button class="btn" id="create">Create</button>
-          <p class="tiny muted">Generates a code and takes you to the game.</p>
+          <h2>Play mode</h2>
+          <button class="lobby-btn" id="modeCpu">Player Vs. CPU</button>
         </div>
-
         <div>
-          <h2>Join room</h2>
-          <label class="label">Room code</label>
-          <input class="input" id="room" placeholder="e.g. X7K2Q" autocomplete="off" />
-          <button class="btn" id="join">Join</button>
+          <button class="lobby-btn" id="modePvp">Player Vs. Player</button>
         </div>
       </div>
       <div class="hr"></div>
@@ -41,18 +38,16 @@ export function renderLobby(root) {
   const cardEl = el.querySelector(".card");
   const settingsBtn = el.querySelector("#settings");
   const playerNameEl = el.querySelector("#playerName");
-  const logoutBtn = el.querySelector("#logout");
   const lobbyMessage = document.createElement("p");
   lobbyMessage.className = "tiny muted";
   lobbyMessage.style.marginTop = "10px";
+  let lobbyView = initialView;
 
   const accountUsername = getCurrentUser()?.user_metadata?.username;
   if (accountUsername && accountUsername !== state.playerName) {
     setPlayerName(accountUsername);
   }
   playerNameEl.textContent = state.playerName || accountUsername || "Unknown";
-
-  const roomInput = el.querySelector("#room");
 
   // quick code generator
   const makeCode = () => {
@@ -63,29 +58,113 @@ export function renderLobby(root) {
     return out;
   };
 
-  el.querySelector("#create").addEventListener("click", () => {
-    if (!state.playerName || state.playerName.length < 2) {
-      window.location.hash = "#/";
-      return;
-    }
-    const code = makeCode();
-    setRoomId(code);
-    window.location.hash = `#/game/${code}`;
-  });
+  const modeOrRoomGrid = el.querySelector("#modeOrRoomGrid");
 
-  el.querySelector("#join").addEventListener("click", () => {
-    if (!state.playerName || state.playerName.length < 2) {
-      window.location.hash = "#/";
-      return;
+  const syncPageWidthFromModeGrid = () => {
+    const gridWidth = modeOrRoomGrid.getBoundingClientRect().width;
+    const cardStyle = window.getComputedStyle(cardEl);
+    const padX = (parseFloat(cardStyle.paddingLeft) || 0) + (parseFloat(cardStyle.paddingRight) || 0);
+    const targetWidth = Math.ceil(gridWidth + padX);
+
+    if (targetWidth > 0) {
+      document.documentElement.style.setProperty("--page-content-width", `${targetWidth}px`);
     }
-    const code = roomInput.value.trim().toUpperCase();
-    if (code.length < 3) {
-      roomInput.focus();
-      return;
+  };
+
+  requestAnimationFrame(syncPageWidthFromModeGrid);
+
+  const wireRoomActions = () => {
+    const createBtn = el.querySelector("#create");
+    const joinBtn = el.querySelector("#join");
+    const roomInput = el.querySelector("#room");
+
+    if (createBtn) {
+      createBtn.addEventListener("click", () => {
+        if (!state.playerName || state.playerName.length < 2) {
+          window.location.hash = "#/";
+          return;
+        }
+        const code = makeCode();
+        setRoomId(code);
+        window.location.hash = `#/game/${code}`;
+      });
     }
-    setRoomId(code);
-    window.location.hash = `#/game/${code}`;
-  });
+
+    if (joinBtn && roomInput) {
+      joinBtn.addEventListener("click", () => {
+        if (!state.playerName || state.playerName.length < 2) {
+          window.location.hash = "#/";
+          return;
+        }
+        const code = roomInput.value.trim().toUpperCase();
+        if (code.length < 3) {
+          roomInput.focus();
+          return;
+        }
+        setRoomId(code);
+        window.location.hash = `#/game/${code}`;
+      });
+    }
+  };
+
+  const wireBackToLobby = () => {
+    const backBtn = el.querySelector("#backToLobby");
+    if (!backBtn) return;
+
+    backBtn.addEventListener("click", () => {
+      root.innerHTML = "";
+      renderLobby(root, { initialView: "mode" });
+    });
+  };
+
+  const showRoomOptions = () => {
+    lobbyView = "room";
+    document.getElementById("lobbyMessage").innerHTML = "Create a room or join one with a code.";
+    modeOrRoomGrid.innerHTML = `
+      <div>
+        <h2>Create room</h2>
+        <button class="btn" id="create">Create</button>
+        <p class="tiny muted">Generates a code and takes you to the game.</p>
+      </div>
+
+      <div>
+        <h2>Join room</h2>
+        <label class="label">Room code</label>
+        <input class="input" id="room" placeholder="e.g. X7K2Q" autocomplete="off" />
+        <button class="btn" id="join">Join</button>
+        <button class="btn ghost" id="backToLobby" style="margin-top:10px;">Go Back</button>
+      </div>
+    `;
+
+    wireRoomActions();
+    wireBackToLobby();
+  };
+
+  const showCPUOptions = () => {
+    lobbyView = "cpu";
+    document.getElementById("lobbyMessage").innerHTML = "Where CPU battleship is played. Sink all the ships to win!";
+    modeOrRoomGrid.innerHTML = `
+      <div style="grid-column: 1 / -1;">
+        <h2>Player vs CPU</h2>
+        <button class="btn" id="create">Start game vs CPU</button>
+        <p class="tiny muted">Generates a code and takes you to the game.</p>
+        <button class="btn ghost" id="backToLobby" style="margin-top:10px;">Go Back</button>
+      </div>
+    `;
+
+    wireRoomActions();
+    wireBackToLobby();
+  };
+
+  el.querySelector("#modeCpu").addEventListener("click", showCPUOptions);
+  el.querySelector("#modePvp").addEventListener("click", showRoomOptions);
+
+  if (initialView === "room") {
+    showRoomOptions();
+  }
+  if (initialView === "cpu") {
+    showCPUOptions();
+  }
 
   const handleUsernameChange = async (buttonToDisable = changeUsernameBtn) => {
     const suggestedName = state.playerName || accountUsername || "";
@@ -156,7 +235,7 @@ export function renderLobby(root) {
 
     closeSettingsBtn.addEventListener("click", () => {
       root.innerHTML = "";
-      renderLobby(root);
+      renderLobby(root, { initialView: lobbyView });
     });
 
     settingsChangeUsernameBtn.addEventListener("click", () => {

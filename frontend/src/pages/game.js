@@ -16,18 +16,15 @@ export function renderGame(root, { roomId }) {
       <div>
         <h1>Game</h1>
         <p class="muted">Room: <span class="mono">${code}</span> · Player: <span class="mono">${state.playerName || "?"}</span></p>
-      </div>
-      <div class="topbar-actions">
-        <a class="btn ghost" href="#/lobby">Leave</a>
+        <a class="btn" href="#/lobby">Leave</a>
       </div>
     </div>
 
     <div class="layout">
       <div class="panel">
-        <h2>Setup</h2>
+        <h2 id="setup-heading">Setup</h2>
         <div id="setup-controls">
           <p class="muted">Place your ships, then click Ready.</p>
-
           <div class="row">
             <label class="label">Ship</label>
             <select class="input" id="ship">
@@ -55,6 +52,16 @@ export function renderGame(root, { roomId }) {
         
         <div class="hr"></div>
         <p class="tiny muted" id="debug"></p>
+        <div class="fleet-status" id="fleet-panel" style="display: none; pointer-events: none; visibility: hidden;">
+          <h3>Enemy Fleet</h3>
+          <div style="margin-bottom: 10px; font-size: 0.9rem; color: #ccc;">
+            <span style="margin-right: 15px;">Hits: <strong id="hit-count" style="color: #ff4444;">0</strong></span>
+            <span>Misses: <strong id="miss-count" style="color: #fff;">0</strong></span>
+          </div>
+          <div id="enemy-fleet" class="ship-list">
+            <!-- Populated by JS -->
+          </div>
+        </div>
       </div>
 
       <div class="boards">
@@ -66,17 +73,6 @@ export function renderGame(root, { roomId }) {
         <div class="boardWrap">
           <h2>Opponent</h2>
           <div id="oppBoard"></div>
-        </div>
-      </div>
-
-      <div class="panel fleet-status" id="fleet-panel" style="visibility: hidden;">
-        <h3>Enemy Fleet</h3>
-        <div style="margin-bottom: 10px; font-size: 0.9rem; color: #ccc;">
-          <span style="margin-right: 15px;">Hits: <strong id="hit-count" style="color: #ff4444;">0</strong></span>
-          <span>Misses: <strong id="miss-count" style="color: #fff;">0</strong></span>
-        </div>
-        <div id="enemy-fleet" class="ship-list">
-          <!-- Populated by JS -->
         </div>
       </div>
     </div>
@@ -102,6 +98,7 @@ export function renderGame(root, { roomId }) {
   const shipSelect = el.querySelector("#ship");
   const status = el.querySelector("#status");
   const debug = el.querySelector("#debug");
+  const setupHeading = el.querySelector("#setup-heading");
   const setupPanel = el.querySelector("#setup-controls");
   const fleetPanel = el.querySelector("#fleet-panel");
   const enemyFleetList = el.querySelector("#enemy-fleet");
@@ -242,9 +239,11 @@ export function renderGame(root, { roomId }) {
 
   socket.on("game_start", (data) => {
     gameActive = true;
+    setupHeading.style.display = "none";
     setupPanel.style.display = "none"; // Hide setup controls
     setupPanel.style.pointerEvents = "none";
     fleetPanel.style.visibility = "visible"; // Show fleet status
+    fleetPanel.style.display = "block";
 
     isMyTurn = data.turn === socket.id;
     updateStatus(
