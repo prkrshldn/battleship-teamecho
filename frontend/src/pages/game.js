@@ -8,6 +8,7 @@ export function renderGame(root, { roomId }) {
   el.className = "page wide";
 
   const code = roomId || state.roomId || "?????";
+  const matchMode = state.matchMode === "ranked" ? "ranked" : "local";
   state.roomId = code;
 
   // --- HTML Layout ---
@@ -15,7 +16,7 @@ export function renderGame(root, { roomId }) {
     <div class="topbar">
       <div>
         <h1>Game</h1>
-        <p class="muted">Room: <span class="mono">${code}</span> · Player: <span class="mono">${state.playerName || "?"}</span></p>
+        <p class="muted">Mode: <span class="mono">${matchMode}</span> · Room: <span class="mono">${code}</span> · Player: <span class="mono">${state.playerName || "?"}</span></p>
         <a class="btn" href="#/lobby">Leave</a>
       </div>
     </div>
@@ -52,6 +53,15 @@ export function renderGame(root, { roomId }) {
         
         <div class="hr"></div>
         <p class="tiny muted" id="debug"></p>
+        <div id="powerup-panel" style="display: none; margin-top: 20px;">
+          <div class="hr"></div>
+          <h2>Power-Ups</h2>
+          <div style="display: flex; gap: 10px; margin-top: 10px;">
+            <button class="btn ghost" id="btn-sonar">Sonar (<span id="count-sonar">0</span>)</button>
+            <button class="btn ghost" id="btn-doubleshot">Double Shot (<span id="count-doubleshot">0</span>)</button>
+          </div>
+          <p id="powerup-status" class="muted tiny" style="margin-top: 10px;">Select a power-up to use</p>
+        </div>
         <div class="fleet-status" id="fleet-panel" style="display: none; pointer-events: none; visibility: hidden;">
           <h3>Enemy Fleet</h3>
           <div style="margin-bottom: 10px; font-size: 0.9rem; color: #ccc;">
@@ -94,6 +104,9 @@ export function renderGame(root, { roomId }) {
   let myHits = 0;
   let myMisses = 0;
   let myShipsSunk = 0;
+  let activePowerup = null; // 'sonar', 'doubleShot', null
+  let sonarCount = 0;
+  let doubleShotCount = 0;
 
   const shipSelect = el.querySelector("#ship");
   const status = el.querySelector("#status");
@@ -101,9 +114,15 @@ export function renderGame(root, { roomId }) {
   const setupHeading = el.querySelector("#setup-heading");
   const setupPanel = el.querySelector("#setup-controls");
   const fleetPanel = el.querySelector("#fleet-panel");
+  const powerupPanel = el.querySelector("#powerup-panel");
   const enemyFleetList = el.querySelector("#enemy-fleet");
   const hitCountEl = el.querySelector("#hit-count");
   const missCountEl = el.querySelector("#miss-count");
+  const btnSonar = el.querySelector("#btn-sonar");
+  const btnDoubleShot = el.querySelector("#btn-doubleshot");
+  const powerupStatus = el.querySelector("#powerup-status");
+  const countSonar = el.querySelector("#count-sonar");
+  const countDoubleShot = el.querySelector("#count-doubleshot");
 
   const shipsToPlace = [
     { key: "carrier", len: 5 },
@@ -189,8 +208,8 @@ export function renderGame(root, { roomId }) {
 
   // --- Socket Logic ---
   const onConnect = () => {
-    socket.emit("join", code, state.playerName);
-    console.log(`${state.playerName} joining room: ${code}`);
+    socket.emit("join", code, state.playerName, { mode: matchMode });
+    console.log(`${state.playerName} joining ${matchMode} room: ${code}`);
   };
 
   const onConnectError = () => {
@@ -201,13 +220,41 @@ export function renderGame(root, { roomId }) {
   socket.on("connect", onConnect);
   socket.on("connect_error", onConnectError);
 
-  if (socket.connected) {
-    onConnect();
-  } else {
-    connectSocket().catch(() => {
-      onConnectError();
+  const onJoinError = (data) => {
+    updateStatus(data?.message || "Failed to join this room.");
+  };
+
+  socket.on("join_error", onJoinError);
+
+  const onPlayerStats = (stats) => {
+    if (stats.powerups) {
+      sonarCount = stats.powerups.sonar || 0;
+      doubleShotCount = stats.powerups.doubleShot || 0;
+      countSonar.textContent = sonarCount;
+      countDoubleShot.textContent = doubleShotCount;
+    }
+  };
+  socket.on("player_stats", onPlayerStats);
+
+  socket.on("sonar_result", (data) => {
+    updateStatus(data.found.length > 0 ? `Sonar found ${data.found.length} ship parts! Still your turn.` : `Sonar found nothing. Still your turn!`);
+    sonarCount = data.remaining;
+    countSonar.textContent = sonarCount;
+    data.found.forEach(cell => {
+      opp.markSonar(cell.r, cell.c);
     });
-  }
+  });
+
+  socket.on("double_shot_activated", (data) => {
+    updateStatus("Double shot activated! Your next miss won't end your turn.");
+    doubleShotCount = data.remaining;
+    countDoubleShot.textContent = doubleShotCount;
+  });
+
+  socket.on("bonus_turn", (data) => {
+    updateStatus(data.message);
+    isMyTurn = true;
+  });
 
   socket.on("room_update", (data) => {
     // data.players = [{name, ready}, ...]
@@ -223,6 +270,14 @@ export function renderGame(root, { roomId }) {
       );
     }
   });
+
+  if (socket.connected) {
+    onConnect();
+  } else {
+    connectSocket().catch(() => {
+      onConnectError();
+    });
+  }
 
   // Render initial enemy fleet (hidden)
   function renderEnemyFleet() {
@@ -244,6 +299,7 @@ export function renderGame(root, { roomId }) {
     setupPanel.style.pointerEvents = "none";
     fleetPanel.style.visibility = "visible"; // Show fleet status
     fleetPanel.style.display = "block";
+    powerupPanel.style.display = "block"; // Show powerups
 
     isMyTurn = data.turn === socket.id;
     updateStatus(
@@ -314,6 +370,29 @@ export function renderGame(root, { roomId }) {
     const oppId = Object.keys(data.summary).find((id) => id !== socket.id);
     const oppSummary = data.summary[oppId];
 
+    let myEloHtml = "";
+    let oppEloHtml = "";
+    let powerupMsg = "";
+    if (data.eloChanges) {
+      const myEloChange = iWon ? `+${data.eloChanges.winnerGain}` : `${data.eloChanges.loserLoss}`;
+      const myNewElo = iWon ? data.eloChanges.winnerNewElo : data.eloChanges.loserNewElo;
+      
+      const oppEloChange = !iWon ? `+${data.eloChanges.winnerGain}` : `${data.eloChanges.loserLoss}`;
+      const oppNewElo = !iWon ? data.eloChanges.winnerNewElo : data.eloChanges.loserNewElo;
+
+      myEloHtml = `<p class="mono" style="color: ${iWon ? '#4ade80' : '#f87171'}">ELO: ${myNewElo} (${myEloChange})</p>`;
+      oppEloHtml = `<p class="mono" style="color: ${!iWon ? '#4ade80' : '#f87171'}">ELO: ${oppNewElo} (${oppEloChange})</p>`;
+
+      if (iWon && data.eloChanges.winnerPowerupAwarded) {
+        powerupMsg = `<p style="color: #fbbf24; font-weight: bold; margin-bottom: 2px;">🎁 Win Reward: 1x ${data.eloChanges.winnerPowerupAwarded === 'sonar' ? 'Sonar' : 'Double Shot'}!</p>`;
+        
+        const b = data.eloChanges.bonuses || {};
+        if (b.flawless) powerupMsg += `<p style="color: #38bdf8; font-weight: bold; margin-bottom: 2px;">🎯 Flawless Victory: +1 Sonar, +1 Double Shot!</p>`;
+        if (b.streak) powerupMsg += `<p style="color: #f472b6; font-weight: bold; margin-bottom: 2px;">🔥 3-Win Streak: +2 Sonars, +2 Double Shots!</p>`;
+        if (b.eloTier) powerupMsg += `<p style="color: #a78bfa; font-weight: bold; margin-bottom: 2px;">⭐ New ELO Tier: +1 Sonar, +1 Double Shot!</p>`;
+      }
+    }
+
     // Render a simple end-of-game summary panel
     const modal = document.createElement("div");
     modal.className = "modal";
@@ -325,19 +404,25 @@ export function renderGame(root, { roomId }) {
         <div class="summary-grid">
           <div>
             <h3>You</h3>
+            ${powerupMsg}
+            ${myEloHtml}
             <p class="mono">Hits: ${mySummary.hits} · Misses: ${mySummary.misses}</p>
             <p class="mono">Ships sunk: ${mySummary.shipsSunk}</p>
             <p class="tiny muted">Sunk: ${(mySummary.sunkShips || []).join(", ") || "—"}</p>
           </div>
           <div>
             <h3>${oppSummary?.name || "Opponent"}</h3>
+            ${oppEloHtml}
             <p class="mono">Hits: ${oppSummary?.hits ?? 0} · Misses: ${oppSummary?.misses ?? 0}</p>
             <p class="mono">Ships sunk: ${oppSummary?.shipsSunk ?? 0}</p>
             <p class="tiny muted">Sunk: ${(oppSummary?.sunkShips || []).join(", ") || "—"}</p>
           </div>
         </div>
         <div class="hr"></div>
-        <a class="btn" href="#/lobby">Back to lobby</a>
+        <div style="display: flex; gap: 10px; justify-content: center;">
+          <a class="btn" href="#/lobby">Back to lobby</a>
+          <a class="btn ghost" href="#/leaderboard">View Leaderboard</a>
+        </div>
       </div>
     `;
     document.body.appendChild(modal);
@@ -393,6 +478,32 @@ export function renderGame(root, { roomId }) {
     else updateStatus("Invalid placement.");
   });
 
+  // Power-Ups
+  btnSonar.addEventListener("click", () => {
+    if (!gameActive || !isMyTurn) return;
+    if (sonarCount <= 0) {
+      updateStatus("No sonar available!");
+      return;
+    }
+    activePowerup = activePowerup === "sonar" ? null : "sonar";
+    powerupStatus.textContent = activePowerup === "sonar" ? "Sonar equipped: click on opponent board to scan 3x3 area" : "Select a power-up to use";
+    btnSonar.classList.toggle("active", activePowerup === "sonar");
+    btnDoubleShot.classList.remove("active");
+  });
+
+  btnDoubleShot.addEventListener("click", () => {
+    if (!gameActive || !isMyTurn) return;
+    if (doubleShotCount <= 0) {
+      updateStatus("No double shot available!");
+      return;
+    }
+    // Instantly activate
+    socket.emit("activate_double_shot", { roomCode: code });
+    activePowerup = null;
+    powerupStatus.textContent = "Select a power-up to use";
+    btnSonar.classList.remove("active");
+  });
+
   // Ready Button
   el.querySelector("#ready").addEventListener("click", () => {
     if (placed.size !== shipsToPlace.length) {
@@ -420,6 +531,14 @@ export function renderGame(root, { roomId }) {
       return;
     }
 
+    if (activePowerup === "sonar") {
+      socket.emit("use_sonar", { roomCode: code, r, c });
+      activePowerup = null;
+      powerupStatus.textContent = "Select a power-up to use";
+      btnSonar.classList.remove("active");
+      return;
+    }
+
     // Check if check is already hit/miss
     // 0=empty, 1=ship (hidden), 2=miss, 3=hit
     const currentState = opp.grid[r][c];
@@ -443,6 +562,8 @@ export function renderGame(root, { roomId }) {
       socket.off("turn_change");
       socket.off("shot_result");
       socket.off("game_over");
+      socket.off("player_stats", onPlayerStats);
+      socket.off("join_error", onJoinError);
       socket.off("connect", onConnect);
       socket.off("connect_error", onConnectError);
     },

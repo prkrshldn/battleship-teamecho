@@ -1,0 +1,38 @@
+{
+  "facu": {
+    "name": "facu",
+    "elo": 954,
+    "wins": 1,
+    "losses": 4,
+    "powerups": {
+      "sonar": 3,
+      "doubleShot": 2
+    },
+    "currentWinStreak": 0,
+    "highestEloReached": 1016
+  },
+  "th3skeleton": {
+    "name": "th3skeleton",
+    "elo": 1034,
+    "wins": 4,
+    "losses": 2,
+    "powerups": {
+      "sonar": 8,
+      "doubleShot": 10
+    },
+    "currentWinStreak": 1,
+    "highestEloReached": 1034
+  },
+  "burneraccount": {
+    "name": "burneraccount",
+    "elo": 1012,
+    "wins": 3,
+    "losses": 2,
+    "powerups": {
+      "sonar": 1,
+      "doubleShot": 4
+    },
+    "currentWinStreak": 0,
+    "highestEloReached": 1029
+  }
+}

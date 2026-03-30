@@ -1,0 +1,152 @@
+import { getCurrentUser, logout } from "../auth";
+
+const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || "http://localhost:9999";
+
+export function renderLeaderboard(root) {
+  const el = document.createElement("div");
+  el.className = "page";
+
+  el.innerHTML = `
+    <h1>Battleship</h1>
+    <div class="card">
+      <div class="grid2">
+        <div style="display: flex; justify-content: space-between; align-items: center;">
+          <div class="settings" id="settings" title="Account settings">
+            <i class="fa-solid fa-gear"></i>
+          </div>
+          <p>Logged in as: <span id="playerName">${getCurrentUser()?.user_metadata?.username || "Unknown"}</span></p>
+        </div>
+      </div>
+      <div class="hr"></div>
+      <h2>Leaderboard</h2>
+      <p class="muted" id="leaderboardMessage">Loading leaderboard...</p>
+      <div id="leaderboardContainer" style="overflow-x: auto;">
+        <!-- Populated by JS -->
+      </div>
+      <div class="hr"></div>
+      <a class="btn" href="#/lobby">Back to Lobby</a>
+    </div>
+  `;
+
+  root.appendChild(el);
+
+  const cardEl = el.querySelector(".card");
+  const settingsBtn = el.querySelector("#settings");
+  const playerNameEl = el.querySelector("#playerName");
+  const leaderboardMessage = el.querySelector("#leaderboardMessage");
+  const leaderboardContainer = el.querySelector("#leaderboardContainer");
+
+  const fetchLeaderboard = async () => {
+    try {
+      const response = await fetch(`${BACKEND_URL}/api/leaderboard`);
+      if (!response.ok) throw new Error("Failed to fetch leaderboard");
+
+      const data = await response.json();
+      displayLeaderboard(data);
+    } catch (error) {
+      leaderboardMessage.textContent = "Failed to load leaderboard.";
+      console.error("Leaderboard fetch error:", error);
+    }
+  };
+
+  const displayLeaderboard = (players) => {
+    if (!players || players.length === 0) {
+      leaderboardMessage.textContent = "No players on leaderboard yet.";
+      return;
+    }
+
+    const top3 = (players, index) => {
+      if (index === 0) return "👑 1st";
+      if (index === 1) return "🥈 2nd";
+      if (index === 2) return "🥉 3rd";
+      return `#${index + 1}`;
+    };
+
+    leaderboardMessage.style.display = "none";
+
+    const table = document.createElement("table");
+    table.style.width = "100%";
+    table.style.borderCollapse = "collapse";
+    table.innerHTML = `
+      <thead>
+        <tr style="border-bottom: 2px solid #444; background: #1a1a1a;">
+          <th style="text-align: left; padding: 10px; color: #ccc;">Rank</th>
+          <th style="text-align: left; padding: 10px; color: #ccc;">Player</th>
+          <th style="text-align: center; padding: 10px; color: #ccc;">ELO</th>
+          <th style="text-align: center; padding: 10px; color: #ccc;">Wins</th>
+          <th style="text-align: center; padding: 10px; color: #ccc;">Losses</th>
+          <th style="text-align: center; padding: 10px; color: #ccc;">Highest ELO</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${players.map((player, index) => `
+          <tr style="border-bottom: 1px solid #333; background: #0f0f0f;">
+            <td style="padding: 10px; color: #fff; font-weight: bold;">${top3(players, index)}</td>
+            <td style="padding: 10px; color: #fff;">${player.name || "Unknown"}</td>
+            <td style="text-align: center; padding: 10px; color: #4dd0e1;">${player.elo || 1000}</td>
+            <td style="text-align: center; padding: 10px; color: #66bb6a;">${player.wins || 0}</td>
+            <td style="text-align: center; padding: 10px; color: #ef5350;">${player.losses || 0}</td>
+            <td style="text-align: center; padding: 10px; color: #ffd54f;">${player.highestEloReached || player.elo || 1000}</td>
+          </tr>
+        `).join("")}
+      </tbody>
+    `;
+
+    leaderboardContainer.innerHTML = "";
+    leaderboardContainer.appendChild(table);
+  };
+
+  const accountUsername = getCurrentUser()?.user_metadata?.username;
+  playerNameEl.textContent = accountUsername || "Unknown";
+
+  settingsBtn.addEventListener("click", () => {
+    const cardRect = cardEl.getBoundingClientRect();
+
+    cardEl.style.position = "relative";
+    cardEl.style.background = "#000";
+    cardEl.style.color = "#fff";
+    cardEl.style.width = `${cardRect.width}px`;
+    cardEl.style.height = `${cardRect.height}px`;
+    cardEl.style.boxSizing = "border-box";
+    cardEl.style.overflow = "hidden";
+
+    cardEl.innerHTML = `
+      <div style="display: flex; justify-content: space-between; align-items: center;">
+        <div class="settings" id="closeSettings" title="Close settings">
+          <i class="fa-solid fa-x"></i>
+        </div>
+        <p>Logged in as: <span id="playerName">${getCurrentUser()?.user_metadata?.username || "Unknown"}</span></p>
+      </div>
+      <div style="padding-top:30px;display:flex;flex-direction:column;gap:12px;height:100%;">
+        <h2 style="margin:0;color:#fff;">Settings</h2>
+        <p class="tiny" style="margin:0;color:#cfcfcf;">Manage your account from here.</p>
+        <button id="logout" class="btn">Logout</button>
+      </div>
+    `;
+
+    const closeSettingsBtn = cardEl.querySelector("#closeSettings");
+    const settingsLogoutBtn = cardEl.querySelector("#logout");
+
+    settingsLogoutBtn.addEventListener("click", async () => {
+      await logout();
+      window.location.hash = "#/";
+    });
+
+    closeSettingsBtn.addEventListener("click", () => {
+      root.innerHTML = "";
+      renderLeaderboard(root);
+    });
+  });
+
+  // Fetch leaderboard on render
+  fetchLeaderboard();
+
+  // Cleanup on navigation
+  window.addEventListener(
+    "hashchange",
+    () => {
+      // cleanup if needed
+    },
+    { once: true },
+  );
+}
