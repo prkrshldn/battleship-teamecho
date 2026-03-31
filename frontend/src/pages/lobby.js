@@ -1,4 +1,4 @@
-import { state, setRoomId } from "../state";
+import { state, setRoomId, setSettings, applyShipPreset } from "../state";
 
 export function renderLobby(root) {
   const el = document.createElement("div");
@@ -12,8 +12,30 @@ export function renderLobby(root) {
       <div class="grid2">
         <div>
           <h2>Create room</h2>
+
+          <label class="label">Board size</label>
+          <select class="input" id="boardSize">
+            <option value="8">8 x 8</option>
+            <option value="10">10 x 10</option>
+            <option value="12">12 x 12</option>
+          </select>
+
+          <label class="label">Ship count preset</label>
+          <select class="input" id="shipPreset">
+            <option value="light">Light</option>
+            <option value="standard">Standard</option>
+            <option value="heavy">Heavy</option>
+          </select>
+
+          <label class="label">Difficulty</label>
+          <select class="input" id="difficulty">
+            <option value="easy">Easy</option>
+            <option value="normal">Normal</option>
+            <option value="hard">Hard</option>
+          </select>
+
           <button class="btn" id="create">Create</button>
-          <p class="tiny muted">Generates a code and takes you to the game.</p>
+          <p class="tiny muted">These settings apply to the room you create.</p>
         </div>
 
         <div>
@@ -21,6 +43,7 @@ export function renderLobby(root) {
           <label class="label">Room code</label>
           <input class="input" id="room" placeholder="e.g. X7K2Q" autocomplete="off" />
           <button class="btn" id="join">Join</button>
+          <p class="tiny muted">Joining uses that room's settings.</p>
         </div>
       </div>
 
@@ -36,13 +59,24 @@ export function renderLobby(root) {
   el.querySelector("#playerName").textContent = state.playerName || "(not set)";
 
   const roomInput = el.querySelector("#room");
+  const boardSizeSelect = el.querySelector("#boardSize");
+  const shipPresetSelect = el.querySelector("#shipPreset");
+  const difficultySelect = el.querySelector("#difficulty");
 
-  // quick code generator
+  boardSizeSelect.value = String(state.settings.boardSize || 10);
+  difficultySelect.value = state.settings.difficulty || "normal";
+
+  const currentShipCount = state.settings.ships?.length || 5;
+  if (currentShipCount <= 3) shipPresetSelect.value = "light";
+  else if (currentShipCount >= 6) shipPresetSelect.value = "heavy";
+  else shipPresetSelect.value = "standard";
+
   const makeCode = () => {
     const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
     let out = "";
-    for (let i = 0; i < 5; i++)
+    for (let i = 0; i < 5; i++) {
       out += chars[Math.floor(Math.random() * chars.length)];
+    }
     return out;
   };
 
@@ -51,6 +85,13 @@ export function renderLobby(root) {
       window.location.hash = "#/";
       return;
     }
+
+    applyShipPreset(shipPresetSelect.value);
+    setSettings({
+      boardSize: Number(boardSizeSelect.value),
+      difficulty: difficultySelect.value,
+    });
+
     const code = makeCode();
     setRoomId(code);
     window.location.hash = `#/game/${code}`;
@@ -61,11 +102,13 @@ export function renderLobby(root) {
       window.location.hash = "#/";
       return;
     }
+
     const code = roomInput.value.trim().toUpperCase();
     if (code.length < 3) {
       roomInput.focus();
       return;
     }
+
     setRoomId(code);
     window.location.hash = `#/game/${code}`;
   });

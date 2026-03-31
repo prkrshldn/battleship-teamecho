@@ -10,12 +10,29 @@ export function renderGame(root, { roomId }) {
   const code = roomId || state.roomId || "?????";
   state.roomId = code;
 
-  // --- HTML Layout ---
+  const settings = state.settings;
+  const boardSize = settings.boardSize || 10;
+  const shipsToPlace = settings.ships || [];
+  const difficulty = settings.difficulty || "normal";
+
+  const shipOptionsHtml = shipsToPlace
+    .map(
+      (ship) =>
+        `<option value="${ship.key}">${ship.label} (${ship.len})</option>`,
+    )
+    .join("");
+
   el.innerHTML = `
     <div class="topbar">
       <div>
         <h1>Game</h1>
-        <p class="muted">Room: <span class="mono">${code}</span> · Player: <span class="mono">${state.playerName || "?"}</span></p>
+        <p class="muted">
+          Room: <span class="mono">${code}</span> ·
+          Player: <span class="mono">${state.playerName || "?"}</span>
+        </p>
+        <p class="tiny muted">
+          Board: ${boardSize}x${boardSize} · Ships: ${shipsToPlace.length} · Difficulty: ${difficulty}
+        </p>
       </div>
       <div class="topbar-actions">
         <a class="btn ghost" href="#/lobby">Leave</a>
@@ -31,11 +48,7 @@ export function renderGame(root, { roomId }) {
           <div class="row">
             <label class="label">Ship</label>
             <select class="input" id="ship">
-              <option value="5">Carrier (5)</option>
-              <option value="4">Battleship (4)</option>
-              <option value="3">Cruiser (3)</option>
-              <option value="3b">Submarine (3)</option>
-              <option value="2">Destroyer (2)</option>
+              ${shipOptionsHtml}
             </select>
           </div>
 
@@ -52,7 +65,7 @@ export function renderGame(root, { roomId }) {
 
         <h2>Status</h2>
         <p id="status" class="mono">Connecting…</p>
-        
+
         <div class="hr"></div>
         <p class="tiny muted" id="debug"></p>
       </div>
@@ -75,29 +88,24 @@ export function renderGame(root, { roomId }) {
           <span style="margin-right: 15px;">Hits: <strong id="hit-count" style="color: #ff4444;">0</strong></span>
           <span>Misses: <strong id="miss-count" style="color: #fff;">0</strong></span>
         </div>
-        <div id="enemy-fleet" class="ship-list">
-          <!-- Populated by JS -->
-        </div>
+        <div id="enemy-fleet" class="ship-list"></div>
       </div>
     </div>
   `;
 
   root.appendChild(el);
 
-  // --- Components ---
-  const my = createBoard({ size: 10, mode: "place" });
-  const opp = createBoard({ size: 10, mode: "attack" });
+  const my = createBoard({ size: boardSize, mode: "place" });
+  const opp = createBoard({ size: boardSize, mode: "attack" });
 
   el.querySelector("#myBoard").appendChild(my.el);
   el.querySelector("#oppBoard").appendChild(opp.el);
 
-  // --- State Variables ---
   let horizontal = true;
   let isMyTurn = false;
   let gameActive = false;
   let myHits = 0;
   let myMisses = 0;
-  let myShipsSunk = 0;
 
   const shipSelect = el.querySelector("#ship");
   const status = el.querySelector("#status");
@@ -108,16 +116,8 @@ export function renderGame(root, { roomId }) {
   const hitCountEl = el.querySelector("#hit-count");
   const missCountEl = el.querySelector("#miss-count");
 
-  const shipsToPlace = [
-    { key: "carrier", len: 5 },
-    { key: "battleship", len: 4 },
-    { key: "cruiser", len: 3 },
-    { key: "submarine", len: 3 },
-    { key: "destroyer", len: 2 },
-  ];
-  const placed = new Set(); // tracks placed ship keys
+  const placed = new Set();
 
-  // --- Helper Functions ---
   function updateStatus(msg) {
     status.textContent = msg;
   }
@@ -125,18 +125,9 @@ export function renderGame(root, { roomId }) {
   function markPlaced(key) {
     placed.add(key);
 
-    // Disable option in dropdown to give visual feedback
-    const option = Array.from(shipSelect.options).find((o) => {
-      if (key === "carrier" && o.value === "5") return true;
-      if (key === "battleship" && o.value === "4") return true;
-      if (key === "cruiser" && o.value === "3") return true;
-      if (key === "submarine" && o.value === "3b") return true;
-      if (key === "destroyer" && o.value === "2") return true;
-      return false;
-    });
+    const option = Array.from(shipSelect.options).find((o) => o.value === key);
     if (option) option.disabled = true;
 
-    // Auto-select next available ship
     const nextOption = Array.from(shipSelect.options).find((o) => !o.disabled);
     if (nextOption) shipSelect.value = nextOption.value;
 
@@ -149,17 +140,20 @@ export function renderGame(root, { roomId }) {
 
   function resetPlacementUI() {
     placed.clear();
-    Array.from(shipSelect.options).forEach((o) => (o.disabled = false));
+    Array.from(shipSelect.options).forEach((o) => {
+      o.disabled = false;
+    });
   }
 
   function setAllPlacedUI() {
     shipsToPlace.forEach((s) => placed.add(s.key));
-    Array.from(shipSelect.options).forEach((o) => (o.disabled = true));
+    Array.from(shipSelect.options).forEach((o) => {
+      o.disabled = true;
+    });
     updateStatus("All ships placed. Click Ready.");
   }
 
   function randomPlaceAllShips() {
-    // keep trying until all ships placed
     my.clear();
     resetPlacementUI();
 
@@ -168,11 +162,13 @@ export function renderGame(root, { roomId }) {
 
     for (const ship of shipsToPlace) {
       let placedOk = false;
+
       while (!placedOk && attempts < maxAttempts) {
         attempts++;
         const horizontalTry = Math.random() < 0.5;
-        const r = Math.floor(Math.random() * 10);
-        const c = Math.floor(Math.random() * 10);
+        const r = Math.floor(Math.random() * boardSize);
+        const c = Math.floor(Math.random() * boardSize);
+
         placedOk = my.placeShip({
           r,
           c,
@@ -181,8 +177,8 @@ export function renderGame(root, { roomId }) {
           name: ship.key,
         });
       }
+
       if (!placedOk) {
-        // If we got unlucky and boxed ourselves in, start over.
         return randomPlaceAllShips();
       }
     }
@@ -190,14 +186,13 @@ export function renderGame(root, { roomId }) {
     setAllPlacedUI();
   }
 
-  // --- Socket Logic ---
-
-  // 1. Join Room
-  socket.emit("join", code, state.playerName);
-  console.log(`${state.playerName} joining room: ${code}`);
+  socket.emit("join", {
+    roomCode: code,
+    playerName: state.playerName,
+    settings: state.settings,
+  });
 
   socket.on("room_update", (data) => {
-    // data.players = [{name, ready}, ...]
     const count = data.players.length;
     const readyCount = data.players.filter((p) => p.ready).length;
     debug.textContent = `Players in room: ${count}. Ready: ${readyCount}`;
@@ -211,24 +206,24 @@ export function renderGame(root, { roomId }) {
     }
   });
 
-  // Render initial enemy fleet (hidden)
   function renderEnemyFleet() {
     enemyFleetList.innerHTML = "";
     shipsToPlace.forEach((ship) => {
       const div = document.createElement("div");
       div.className = "ship-item";
       div.id = `enemy-ship-${ship.key}`;
-      div.innerHTML = `<span>${ship.key}</span> <span>${ship.len}</span>`;
+      div.innerHTML = `<span>${ship.label}</span> <span>${ship.len}</span>`;
       enemyFleetList.appendChild(div);
     });
   }
+
   renderEnemyFleet();
 
   socket.on("game_start", (data) => {
     gameActive = true;
-    setupPanel.style.display = "none"; // Hide setup controls
+    setupPanel.style.display = "none";
     setupPanel.style.pointerEvents = "none";
-    fleetPanel.style.visibility = "visible"; // Show fleet status
+    fleetPanel.style.visibility = "visible";
 
     isMyTurn = data.turn === socket.id;
     updateStatus(
@@ -236,8 +231,6 @@ export function renderGame(root, { roomId }) {
         ? "Game Started! YOUR TURN. Fire!"
         : "Game Started! Opponent's turn.",
     );
-
-    // Switch boards to game mode visual if needed
   });
 
   socket.on("turn_change", (data) => {
@@ -246,13 +239,11 @@ export function renderGame(root, { roomId }) {
   });
 
   socket.on("shot_result", (data) => {
-    // data = { shooter, r, c, hit }
     const iShot = data.shooter === socket.id;
+
     if (iShot) {
-      // I shot at opponent
       opp.markShot(data.r, data.c, data.hit ? "hit" : "miss");
 
-      // Update counters
       if (data.hit) {
         myHits++;
         hitCountEl.textContent = myHits;
@@ -262,27 +253,18 @@ export function renderGame(root, { roomId }) {
         missCountEl.textContent = myMisses;
         updateStatus("Missed!");
       }
-
-      console.log(`Shot at (${data.r}, ${data.c}) was a ${data.hit}`);
     } else {
-      // Opponent shot at me
       my.markShot(data.r, data.c, data.hit ? "hit" : "miss");
     }
 
     if (data.sunk) {
       const iSunkIt = data.shooter === socket.id;
       if (iSunkIt) {
-        // I sunk opponent's ship
-        myShipsSunk++;
         updateStatus(`YOU SUNK THEIR ${data.sunk.toUpperCase()}!`);
         const shipEl = el.querySelector(`#enemy-ship-${data.sunk}`);
-        if (shipEl) {
-          shipEl.classList.add("sunk");
-        }
+        if (shipEl) shipEl.classList.add("sunk");
       } else {
-        // My ship was sunk
         updateStatus(`YOUR ${data.sunk.toUpperCase()} WAS SUNK!`);
-        // Mark on my board
         my.markSunk(data.sunk);
       }
     }
@@ -299,7 +281,6 @@ export function renderGame(root, { roomId }) {
     const oppId = Object.keys(data.summary).find((id) => id !== socket.id);
     const oppSummary = data.summary[oppId];
 
-    // Render a simple end-of-game summary panel
     const modal = document.createElement("div");
     modal.className = "modal";
     modal.innerHTML = `
@@ -327,39 +308,31 @@ export function renderGame(root, { roomId }) {
     `;
     document.body.appendChild(modal);
 
-    // stop listening to turn events so it doesn't flicker status after game end
     socket.off("turn_change");
   });
 
-  // --- Event Listeners ---
-
-  // Rotate
   el.querySelector("#rotate").addEventListener("click", () => {
     horizontal = !horizontal;
     el.querySelector("#orientation-display").textContent = horizontal
       ? "Horizontal"
       : "Vertical";
-    // visual feedback optional
   });
 
-  // Reset
   el.querySelector("#reset").addEventListener("click", () => {
     my.clear();
     resetPlacementUI();
     updateStatus("Reset. Place your ships.");
   });
 
-  // Random
   el.querySelector("#random").addEventListener("click", () => {
     if (gameActive) return;
     randomPlaceAllShips();
   });
 
-  // Place Ship (Click on My Board)
   my.onCellClick((r, c) => {
-    if (gameActive) return; // Can't place during game
+    if (gameActive) return;
 
-    const info = getShipInfo(shipSelect);
+    const info = getShipInfo(shipSelect, shipsToPlace);
     if (!info) return;
 
     if (placed.has(info.key)) {
@@ -374,11 +347,11 @@ export function renderGame(root, { roomId }) {
       horizontal,
       name: info.key,
     });
+
     if (ok) markPlaced(info.key);
     else updateStatus("Invalid placement.");
   });
 
-  // Ready Button
   el.querySelector("#ready").addEventListener("click", () => {
     if (placed.size !== shipsToPlace.length) {
       updateStatus("Place all ships first!");
@@ -389,7 +362,6 @@ export function renderGame(root, { roomId }) {
     el.querySelector("#ready").disabled = true;
     el.querySelector("#reset").disabled = true;
 
-    // Send valid board to server
     socket.emit("place_ships", {
       roomCode: code,
       grid: my.grid,
@@ -397,7 +369,6 @@ export function renderGame(root, { roomId }) {
     });
   });
 
-  // Fire Shot (Click on Opponent Board)
   opp.onCellClick((r, c) => {
     if (!gameActive) return;
     if (!isMyTurn) {
@@ -405,21 +376,21 @@ export function renderGame(root, { roomId }) {
       return;
     }
 
-    // Check if check is already hit/miss
-    // 0=empty, 1=ship (hidden), 2=miss, 3=hit
     const currentState = opp.grid[r][c];
     if (currentState === 2 || currentState === 3) {
-      updateStatus("Already shot there! Fire somewhere else! ");
+      updateStatus("Already shot there! Fire somewhere else!");
       return;
     }
 
     socket.emit("fire", { roomCode: code, r, c });
   });
 
-  // Cleanup on leave
   window.addEventListener(
     "hashchange",
     () => {
+      const modal = document.querySelector(".modal");
+      if (modal) modal.remove();
+
       socket.off("room_update");
       socket.off("game_start");
       socket.off("turn_change");
