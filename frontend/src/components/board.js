@@ -29,6 +29,7 @@ export function createBoard({ size = 10, mode = "place" }) {
           cell.classList.add("hit");
           cell.classList.add("sunk");
         }
+        if (v === 5) cell.classList.add("sonar");
 
         cell.addEventListener("click", () => {
           if (clickHandler) clickHandler(r, c);
@@ -104,6 +105,13 @@ export function createBoard({ size = 10, mode = "place" }) {
     render();
   }
 
+  function markSonar(r, c) {
+    if (grid[r][c] !== 3 && grid[r][c] !== 4) {
+      grid[r][c] = 5;
+      render();
+    }
+  }
+
   function onCellClick(fn) {
     clickHandler = fn;
   }
@@ -123,6 +131,7 @@ export function createBoard({ size = 10, mode = "place" }) {
     placeShip,
     markShot,
     markSunk,
+    markSonar,
     onCellClick,
   };
 }

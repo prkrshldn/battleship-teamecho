@@ -68,6 +68,13 @@ export function renderGame(root, { roomId }) {
         
         <div class="hr"></div>
         <p class="tiny muted" id="debug"></p>
+        
+        <div id="timer-panel" style="display: none; margin-top: 20px;">
+          <div class="hr"></div>
+          <h2>Turn Timer</h2>
+          <div style="font-size: 2.5rem; color: #ffeb3b; text-align: center; margin-top: 10px; font-variant-numeric: tabular-nums;" id="timer-display">30</div>
+        </div>
+
         <div id="powerup-panel" style="display: none; margin-top: 20px;">
           <div class="hr"></div>
           <h2>Power-Ups</h2>
@@ -138,7 +145,39 @@ export function renderGame(root, { roomId }) {
   const powerupStatus = el.querySelector("#powerup-status");
   const countSonar = el.querySelector("#count-sonar");
   const countDoubleShot = el.querySelector("#count-doubleshot");
+  const timerPanel = el.querySelector("#timer-panel");
+  const timerDisplay = el.querySelector("#timer-display");
   const placed = new Set(); // tracks placed ship keys
+
+  let timerInterval = null;
+  let timeLeft = 30;
+
+  function startTimer() {
+    clearInterval(timerInterval);
+    timeLeft = 30;
+    timerDisplay.textContent = timeLeft;
+    timerDisplay.style.color = "#ffeb3b";
+    
+    timerInterval = setInterval(() => {
+      timeLeft--;
+      timerDisplay.textContent = timeLeft;
+      
+      if (timeLeft <= 10) {
+        timerDisplay.style.color = "#ff4444";
+      }
+      
+      if (timeLeft <= 0) {
+        clearInterval(timerInterval);
+        socket.emit("turn_timeout", { roomCode: code });
+      }
+    }, 1000);
+  }
+
+  function stopTimer() {
+    clearInterval(timerInterval);
+    timerDisplay.textContent = "--";
+    timerDisplay.style.color = "#666";
+  }
 
   // --- Helper Functions ---
   function updateStatus(msg) {
@@ -243,6 +282,7 @@ export function renderGame(root, { roomId }) {
     data.found.forEach(cell => {
       opp.markSonar(cell.r, cell.c);
     });
+    startTimer();
   });
 
   socket.on("double_shot_activated", (data) => {
@@ -254,6 +294,7 @@ export function renderGame(root, { roomId }) {
   socket.on("bonus_turn", (data) => {
     updateStatus(data.message);
     isMyTurn = true;
+    startTimer();
   });
 
   socket.on("room_update", (data) => {
@@ -308,12 +349,19 @@ export function renderGame(root, { roomId }) {
         : "Game Started! Opponent's turn.",
     );
 
+    timerPanel.style.display = "block";
+    if (isMyTurn) startTimer();
+    else stopTimer();
+
     // Switch boards to game mode visual if needed
   });
 
   socket.on("turn_change", (data) => {
     isMyTurn = data.turn === socket.id;
     updateStatus(isMyTurn ? "YOUR TURN. Fire!" : "Opponent's turn...");
+    
+    if (isMyTurn) startTimer();
+    else stopTimer();
   });
 
   socket.on("shot_result", (data) => {
@@ -328,10 +376,12 @@ export function renderGame(root, { roomId }) {
         myHits++;
         hitCountEl.textContent = myHits;
         updateStatus("Direct HIT!");
+        startTimer(); // Reset timer to 30 for the continuation shot
       } else {
         myMisses++;
         missCountEl.textContent = myMisses;
         updateStatus("Missed!");
+        stopTimer();
       }
 
       console.log(`Shot at (${data.r}, ${data.c}) was a ${data.hit}`);
@@ -362,6 +412,7 @@ export function renderGame(root, { roomId }) {
   socket.on("game_over", (data) => {
     gameActive = false;
     isMyTurn = false;
+    stopTimer();
 
     const iWon = data.winnerId === socket.id;
     updateStatus(iWon ? "GAME OVER — YOU WIN 🏆" : "GAME OVER — YOU LOSE");
@@ -566,6 +617,7 @@ export function renderGame(root, { roomId }) {
       socket.off("join_error", onJoinError);
       socket.off("connect", onConnect);
       socket.off("connect_error", onConnectError);
+      clearInterval(timerInterval);
     },
     { once: true },
   );

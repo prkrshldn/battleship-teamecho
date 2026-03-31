@@ -1,9 +1,9 @@
 {
   "facu": {
     "name": "facu",
-    "elo": 954,
+    "elo": 940,
     "wins": 1,
-    "losses": 4,
+    "losses": 5,
     "powerups": {
       "sonar": 3,
       "doubleShot": 2
@@ -34,5 +34,17 @@
     },
     "currentWinStreak": 0,
     "highestEloReached": 1029
+  },
+  "vanselme1": {
+    "name": "vanselme1",
+    "elo": 1014,
+    "wins": 1,
+    "losses": 0,
+    "powerups": {
+      "sonar": 2,
+      "doubleShot": 2
+    },
+    "currentWinStreak": 1,
+    "highestEloReached": 1014
   }
 }

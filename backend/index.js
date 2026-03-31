@@ -885,6 +885,20 @@ io.on("connection", (socket) => {
     }
   });
 
+  // 3.5 Turn Timeout
+  socket.on("turn_timeout", ({ roomCode }) => {
+    const code = roomCode.toUpperCase();
+    const room = rooms[code];
+    // verify the game is active and it is indeed this user's turn
+    if (!room || room.state !== "playing" || room.turn !== socket.id) return;
+
+    const pIds = Object.keys(room.players);
+    const opponentId = pIds.find((id) => id !== socket.id);
+
+    room.turn = opponentId;
+    io.to(code).emit("turn_change", { turn: room.turn });
+  });
+
   // 4. Use Sonar
   socket.on("use_sonar", ({ roomCode, r, c }) => {
     const code = roomCode.toUpperCase();
