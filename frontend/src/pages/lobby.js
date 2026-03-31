@@ -1,6 +1,13 @@
 import { getCurrentUser, logout, updateUsername } from "../auth";
 import { socket, connectSocket } from "../socket";
-import { state, setMatchMode, setPlayerName, setRoomId } from "../state";
+import {
+  state,
+  setMatchMode,
+  setPlayerName,
+  setRoomId,
+  setSettings,
+  applyShipPreset,
+} from "../state";
 
 let cleanupLobbySocketHandlers = null;
 
@@ -31,10 +38,7 @@ export function renderLobby(root, options = {}) {
       <div class="grid2" id="modeOrRoomGrid">
         <div>
           <h2>Play mode</h2>
-          <button class="lobby-btn" id="modeLocal">Local Match (Room Code)</button>
-          <button class="lobby-btn" id="modeRanked" style="margin-top:10px;">Ranked Matchmaking</button>
-        </div>
-        <div>
+          <button class="lobby-btn" id="playerVs">Player Vs. Player</button>
           <button class="lobby-btn" id="modeCpu">Player Vs. CPU</button>
         </div>
       </div>
@@ -172,6 +176,22 @@ export function renderLobby(root, options = {}) {
     const createBtn = el.querySelector("#create");
     const joinBtn = el.querySelector("#join");
     const roomInput = el.querySelector("#room");
+    const boardSizeSelect = el.querySelector("#boardSize");
+    const shipPresetSelect = el.querySelector("#shipPreset");
+    const difficultySelect = el.querySelector("#difficulty");
+
+    if (boardSizeSelect) {
+      boardSizeSelect.value = String(state.settings?.boardSize || 10);
+    }
+    if (difficultySelect) {
+      difficultySelect.value = state.settings?.difficulty || "normal";
+    }
+    if (shipPresetSelect) {
+      const currentShipCount = state.settings?.ships?.length || 5;
+      if (currentShipCount <= 3) shipPresetSelect.value = "light";
+      else if (currentShipCount >= 6) shipPresetSelect.value = "heavy";
+      else shipPresetSelect.value = "standard";
+    }
 
     if (createBtn) {
       createBtn.addEventListener("click", () => {
@@ -181,6 +201,15 @@ export function renderLobby(root, options = {}) {
         }
 
         setMatchMode("local");
+
+        if (boardSizeSelect && shipPresetSelect && difficultySelect) {
+          applyShipPreset(shipPresetSelect.value);
+          setSettings({
+            boardSize: Number(boardSizeSelect.value),
+            difficulty: difficultySelect.value,
+          });
+        }
+
         const code = makeCode();
         setRoomId(code);
         window.location.hash = `#/game/${code}`;
@@ -225,8 +254,29 @@ export function renderLobby(root, options = {}) {
     modeOrRoomGrid.innerHTML = `
       <div>
         <h2>Create local room</h2>
+        <label class="label">Board size</label>
+        <select class="input" id="boardSize">
+          <option value="8">8 x 8</option>
+          <option value="10">10 x 10</option>
+          <option value="12">12 x 12</option>
+        </select>
+
+        <label class="label">Ship count preset</label>
+        <select class="input" id="shipPreset">
+          <option value="light">Light</option>
+          <option value="standard">Standard</option>
+          <option value="heavy">Heavy</option>
+        </select>
+
+        <label class="label">Difficulty</label>
+        <select class="input" id="difficulty">
+          <option value="easy">Easy</option>
+          <option value="normal">Normal</option>
+          <option value="hard">Hard</option>
+        </select>
+
         <button class="btn" id="create">Create</button>
-        <p class="tiny muted">Generates a code and takes you to the game.</p>
+        <p class="tiny muted">These settings apply to the local room you create.</p>
       </div>
 
       <div>
@@ -248,6 +298,26 @@ export function renderLobby(root, options = {}) {
     modeOrRoomGrid.innerHTML = `
       <div style="grid-column: 1 / -1;">
         <h2>Player vs CPU</h2>
+        <label class="label">Board size</label>
+        <select class="input" id="boardSize">
+          <option value="8">8 x 8</option>
+          <option value="10">10 x 10</option>
+          <option value="12">12 x 12</option>
+        </select>
+
+        <label class="label">Ship count preset</label>
+        <select class="input" id="shipPreset">
+          <option value="light">Light</option>
+          <option value="standard">Standard</option>
+          <option value="heavy">Heavy</option>
+        </select>
+
+        <label class="label">Difficulty</label>
+        <select class="input" id="difficulty">
+          <option value="easy">Easy</option>
+          <option value="normal">Normal</option>
+          <option value="hard">Hard</option>
+        </select>
         <button class="btn" id="create">Start game vs CPU</button>
         <p class="tiny muted">Generates a code and takes you to the game.</p>
         <button class="btn ghost" id="backToLobby" style="margin-top:10px;">Go Back</button>
@@ -257,6 +327,25 @@ export function renderLobby(root, options = {}) {
     wireRoomActions();
     wireBackToLobby();
   };
+
+  const showPlayerVsOptions = () => {
+    lobbyView = "playerVs";
+    lobbyMessageEl.textContent = "Player vs Player: create or join a room with a code. Stats do not change.";
+    modeOrRoomGrid.innerHTML = `
+        <div>
+          <h2>Play mode</h2>
+          <button class="lobby-btn" id="modeLocal">Local Match (Room Code)</button>
+          <button class="lobby-btn" id="modeRanked" style="margin-top:10px;">Ranked Matchmaking</button>
+          <button id="viewLeaderboard" class="btn ghost">View Ranked Leaderboard</button>
+        </div>
+      `;
+          
+      el.querySelector("#modeLocal").addEventListener("click", showRoomOptions);
+      el.querySelector("#modeRanked").addEventListener("click", showRankedOptions);
+
+    wireRoomActions();
+    wireBackToLobby();
+  }
 
   const showRankedOptions = () => {
     lobbyView = "ranked";
@@ -296,10 +385,12 @@ export function renderLobby(root, options = {}) {
 
     wireBackToLobby();
   };
-
+  el.querySelector("#playerVs").addEventListener("click", showPlayerVsOptions);
   el.querySelector("#modeCpu").addEventListener("click", showCPUOptions);
-  el.querySelector("#modeLocal").addEventListener("click", showRoomOptions);
-  el.querySelector("#modeRanked").addEventListener("click", showRankedOptions);
+  
+  if (initialView === "playerVs") {
+    showPlayerVsOptions();
+  }
 
   if (initialView === "room") {
     showRoomOptions();
@@ -365,7 +456,6 @@ export function renderLobby(root, options = {}) {
         <p class="tiny" style="margin:0;color:#cfcfcf;">Manage your account from here.</p>
         <button id="logout" class="btn">Logout</button>
         <button id="changeUsername" class="btn">Change username</button>
-        <button id="viewLeaderboard" class="btn ghost">View Leaderboard</button>
       </div>
     `;
 

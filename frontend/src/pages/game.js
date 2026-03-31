@@ -11,12 +11,31 @@ export function renderGame(root, { roomId }) {
   const matchMode = state.matchMode === "ranked" ? "ranked" : "local";
   state.roomId = code;
 
+  const settings = state.settings;
+  const boardSize = settings.boardSize || 10;
+  const shipsToPlace = settings.ships || [];
+  const difficulty = settings.difficulty || "normal";
+
+  const shipOptionsHtml = shipsToPlace
+    .map(
+      (ship) =>
+        `<option value="${ship.key}">${ship.label} (${ship.len})</option>`,
+    )
+    .join("");
+
+  const settingsSummaryHtml =
+    matchMode === "local"
+      ? `<p class="tiny muted">Board: ${boardSize}x${boardSize} · Ships: ${shipsToPlace.length} · Difficulty: ${difficulty}</p>`
+      : "";
+
+
   // --- HTML Layout ---
   el.innerHTML = `
     <div class="topbar">
       <div>
         <h1>Game</h1>
         <p class="muted">Mode: <span class="mono">${matchMode}</span> · Room: <span class="mono">${code}</span> · Player: <span class="mono">${state.playerName || "?"}</span></p>
+        ${settingsSummaryHtml}
         <a class="btn" href="#/lobby">Leave</a>
       </div>
     </div>
@@ -29,11 +48,7 @@ export function renderGame(root, { roomId }) {
           <div class="row">
             <label class="label">Ship</label>
             <select class="input" id="ship">
-              <option value="5">Carrier (5)</option>
-              <option value="4">Battleship (4)</option>
-              <option value="3">Cruiser (3)</option>
-              <option value="3b">Submarine (3)</option>
-              <option value="2">Destroyer (2)</option>
+              ${shipOptionsHtml}
             </select>
           </div>
 
@@ -91,8 +106,8 @@ export function renderGame(root, { roomId }) {
   root.appendChild(el);
 
   // --- Components ---
-  const my = createBoard({ size: 10, mode: "place" });
-  const opp = createBoard({ size: 10, mode: "attack" });
+  const my = createBoard({ size: boardSize, mode: "place" });
+  const opp = createBoard({ size: boardSize, mode: "attack" });
 
   el.querySelector("#myBoard").appendChild(my.el);
   el.querySelector("#oppBoard").appendChild(opp.el);
@@ -123,14 +138,6 @@ export function renderGame(root, { roomId }) {
   const powerupStatus = el.querySelector("#powerup-status");
   const countSonar = el.querySelector("#count-sonar");
   const countDoubleShot = el.querySelector("#count-doubleshot");
-
-  const shipsToPlace = [
-    { key: "carrier", len: 5 },
-    { key: "battleship", len: 4 },
-    { key: "cruiser", len: 3 },
-    { key: "submarine", len: 3 },
-    { key: "destroyer", len: 2 },
-  ];
   const placed = new Set(); // tracks placed ship keys
 
   // --- Helper Functions ---
@@ -142,14 +149,7 @@ export function renderGame(root, { roomId }) {
     placed.add(key);
 
     // Disable option in dropdown to give visual feedback
-    const option = Array.from(shipSelect.options).find((o) => {
-      if (key === "carrier" && o.value === "5") return true;
-      if (key === "battleship" && o.value === "4") return true;
-      if (key === "cruiser" && o.value === "3") return true;
-      if (key === "submarine" && o.value === "3b") return true;
-      if (key === "destroyer" && o.value === "2") return true;
-      return false;
-    });
+    const option = Array.from(shipSelect.options).find((o) => o.value === key);
     if (option) option.disabled = true;
 
     // Auto-select next available ship
@@ -187,8 +187,8 @@ export function renderGame(root, { roomId }) {
       while (!placedOk && attempts < maxAttempts) {
         attempts++;
         const horizontalTry = Math.random() < 0.5;
-        const r = Math.floor(Math.random() * 10);
-        const c = Math.floor(Math.random() * 10);
+        const r = Math.floor(Math.random() * boardSize);
+        const c = Math.floor(Math.random() * boardSize);
         placedOk = my.placeShip({
           r,
           c,
@@ -376,7 +376,7 @@ export function renderGame(root, { roomId }) {
     if (data.eloChanges) {
       const myEloChange = iWon ? `+${data.eloChanges.winnerGain}` : `${data.eloChanges.loserLoss}`;
       const myNewElo = iWon ? data.eloChanges.winnerNewElo : data.eloChanges.loserNewElo;
-      
+
       const oppEloChange = !iWon ? `+${data.eloChanges.winnerGain}` : `${data.eloChanges.loserLoss}`;
       const oppNewElo = !iWon ? data.eloChanges.winnerNewElo : data.eloChanges.loserNewElo;
 
@@ -385,7 +385,7 @@ export function renderGame(root, { roomId }) {
 
       if (iWon && data.eloChanges.winnerPowerupAwarded) {
         powerupMsg = `<p style="color: #fbbf24; font-weight: bold; margin-bottom: 2px;">🎁 Win Reward: 1x ${data.eloChanges.winnerPowerupAwarded === 'sonar' ? 'Sonar' : 'Double Shot'}!</p>`;
-        
+
         const b = data.eloChanges.bonuses || {};
         if (b.flawless) powerupMsg += `<p style="color: #38bdf8; font-weight: bold; margin-bottom: 2px;">🎯 Flawless Victory: +1 Sonar, +1 Double Shot!</p>`;
         if (b.streak) powerupMsg += `<p style="color: #f472b6; font-weight: bold; margin-bottom: 2px;">🔥 3-Win Streak: +2 Sonars, +2 Double Shots!</p>`;
@@ -459,7 +459,7 @@ export function renderGame(root, { roomId }) {
   my.onCellClick((r, c) => {
     if (gameActive) return; // Can't place during game
 
-    const info = getShipInfo(shipSelect);
+    const info = getShipInfo(shipSelect, shipsToPlace);
     if (!info) return;
 
     if (placed.has(info.key)) {

@@ -81,10 +81,6 @@ button {
   transition: border-color 0.25s;
 }
 
-button:hover {
-  border-color: #646cff;
-}
-
 button:focus,
 button:focus-visible {
   outline: 4px auto -webkit-focus-ring-color;
@@ -472,17 +468,24 @@ button:focus-visible {
 
 .lobby-btn {
     width: 100%;
-    padding: 0.5rem 1rem;
+    padding: 2rem 1rem;
     margin-bottom: 1em;
     border-radius: 4px;
     font-weight: bold;
     border: none;
-    background: #646cff;
+    background: #333399;
     color: white;
+    border: #ffffff 1px solid;
     cursor: pointer;
     text-decoration: none;
-    font-size: 0.9rem;
-    transition: backgroundPulse 0.2s;
+    font-size: 1.5rem;
+    transition: all 0.2s;
+}
+
+.lobby-btn:hover {
+  background-color: white;
+  color: #646cff;
+  border-color: #646cff;
 }
 
 .toast-container {
@@ -546,7 +549,9 @@ button:focus-visible {
 }
 
 @keyframes backgroundPulse {
-    0% { background-color: #646cff; }
-    50% { background-color: #535bf2; }
-    100% { background-color: #646cff; }
+    0% { border-top-color: #ffffff; }
+    25% { border-right-color: #ffffff; }  
+    50% { border-bottom-color: #ffffff; }
+    75% { border-left-color: #ffffff; }
+    100% { border-top-color: #ffffff; }
 }
