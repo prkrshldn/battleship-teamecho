@@ -83,16 +83,26 @@ npm install
 
 ---
 
+### Install Root Dependencies
+
+Open a third terminal or return to root and run:
+
+```
+npm install
+```
+
+---
+
+
 ## Running the Application
 
-You must run the backend and frontend separately.
+You can run both the backend and frontend in the root folder.
 
 ### Step 1 – Start Backend
 
 In terminal 1:
 
 ```
-cd backend
 npm start
 ```
 
@@ -101,18 +111,6 @@ Backend will run at:
 ```
 http://localhost:9999
 ```
-
----
-
-### Step 2 – Start Frontend
-
-In terminal 2:
-
-```
-cd frontend
-npm run dev
-```
-
 Frontend will run at:
 
 ```
@@ -121,16 +119,38 @@ http://localhost:5173
 
 ---
 
-## How to Play
+## How to Use
 
 1. Start both backend and frontend servers.
 2. Open [http://localhost:5173](http://localhost:5173) in two separate browser windows.
-3. Enter the same Room Code for both players.
-4. Each player places ships on their board.
-5. Click Ready when ship placement is complete.
-6. Once both players are ready, the game begins.
-7. Players take turns firing at the opponent's board.
-8. The game ends when one player's ships are all sunk.
+3. Create an account using the sign in screen
+4. Once signed in, you would have to sign up again on a different account in a different window
+3. Once done, press Player Vs. Player.
+4. You can play a ranked game or a local game.
+
+## Local Game
+1. Go to Local (Code).
+2. Try out the different settings, or keep it the same
+3. When you're ready press the create button on one window
+4. To join, go to the other window/account and Go to Player Vs. Player -> Local (Code)
+5. Then get the code from the window you created the room in, and paste it in the Join Room text box
+6. Hit join and you're in the game!
+
+## Ranked Game
+1. Go to Ranked Matchmaking.
+2. All you have to do is search for a game.
+3. To be matched up with someone, the other account has to do the same thing
+4. If both accounts are searching for a game, you would join a room where you can play!
+
+## How to Play
+1. Each player places ships on their board.
+2. Click Ready when ship placement is complete.
+3. Once both players are ready, the game begins.
+4. Players take turns firing at the opponent's board.
+5. Players can use power ups during there turn doing different abilities
+6. The game ends when one player's ships are all sunk.
+7. Depending on the game mode, you can get power ups for winning!
+
 
 ---
 
@@ -163,26 +183,25 @@ If either port is already in use, stop the conflicting process or update the por
 
 ---
 
-## Sprint 1 Scope Completion
+## Sprint 2 Scope Completion
 
-The following features were completed in Sprint 1:
+The following features were completed in Sprint 2:
 
-* Multiplayer room system
-* Real-time player connection via Socket.IO
-* Ship placement functionality
-* Player readiness state
-* Turn-based attack system
-* Hit/miss tracking
-* Basic win condition detection
+* Login System
+* Ranked Matchmaking using Elo
+* Power-ups to spice up the game
+* Board settings to change board size, ship count, and difficulty
+* Timer system
+* Ranked Leaderboard
 
 ---
 
 ## Known Limitations (To Be Addressed in Future Sprints)
 
-* No persistent database (in-memory game state only)
-* No matchmaking system beyond room codes
-* No user authentication
 * Basic UI styling
+* The servers aren't perfect just yet, still dealing with issues like the amount of people can be in a room
+* You can't really see your stats for yourself
+* Player Vs. CPU hasn't been integrated yet
 
 ---
 
@@ -200,4 +219,10 @@ npm start
 npm run dev
 npm run build
 npm run preview
+```
+
+### Root
+
+```
+npm start
 ```

@@ -342,10 +342,19 @@ export function renderLobby(root, options = {}) {
           
       el.querySelector("#modeLocal").addEventListener("click", showRoomOptions);
       el.querySelector("#modeRanked").addEventListener("click", showRankedOptions);
+      el.querySelector("#viewLeaderboard").addEventListener("click", showLeaderboard);
 
     wireRoomActions();
     wireBackToLobby();
   }
+
+  const showLeaderboard = () => {
+    lobbyView = "lb";
+    window.location.hash = "#/leaderboard";
+    
+    wireRoomActions();
+    wireBackToLobby();
+  };
 
   const showRankedOptions = () => {
     lobbyView = "ranked";
@@ -388,6 +397,10 @@ export function renderLobby(root, options = {}) {
   el.querySelector("#playerVs").addEventListener("click", showPlayerVsOptions);
   el.querySelector("#modeCpu").addEventListener("click", showCPUOptions);
   
+  if (initialView === "lb") {
+    showLeaderboard();
+  }
+
   if (initialView === "playerVs") {
     showPlayerVsOptions();
   }
@@ -471,10 +484,6 @@ export function renderLobby(root, options = {}) {
       }
       await logout();
       window.location.hash = "#/";
-    });
-
-    viewLeaderboardBtn.addEventListener("click", () => {
-      window.location.hash = "#/leaderboard";
     });
 
     closeSettingsBtn.addEventListener("click", () => {
