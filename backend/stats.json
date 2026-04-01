@@ -46,5 +46,29 @@
     },
     "currentWinStreak": 1,
     "highestEloReached": 1014
+  },
+  "prkrshld": {
+    "name": "prkrshld",
+    "elo": 984,
+    "wins": 0,
+    "losses": 1,
+    "powerups": {
+      "sonar": 0,
+      "doubleShot": 1
+    },
+    "currentWinStreak": 0,
+    "highestEloReached": 1000
+  },
+  "Luma": {
+    "name": "Luma",
+    "elo": 1016,
+    "wins": 1,
+    "losses": 0,
+    "powerups": {
+      "sonar": 3,
+      "doubleShot": 2
+    },
+    "currentWinStreak": 1,
+    "highestEloReached": 1016
   }
 }
