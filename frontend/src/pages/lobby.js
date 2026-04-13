@@ -1,4 +1,4 @@
-import { state, setRoomId, setSettings, applyShipPreset } from "../state";
+import { state, setMatchMode, setRoomId, setSettings, applyShipPreset } from "../state";
 
 export function renderLobby(root) {
   const el = document.createElement("div");
@@ -34,7 +34,8 @@ export function renderLobby(root) {
             <option value="hard">Hard</option>
           </select>
 
-          <button class="btn" id="create">Create</button>
+          <button class="btn" id="create">Create PvP Room</button>
+          <button class="btn ghost" id="cpu">Start VS CPU</button>
           <p class="tiny muted">These settings apply to the room you create.</p>
         </div>
 
@@ -80,7 +81,7 @@ export function renderLobby(root) {
     return out;
   };
 
-  el.querySelector("#create").addEventListener("click", () => {
+  function startGame(mode) {
     if (!state.playerName || state.playerName.length < 2) {
       window.location.hash = "#/";
       return;
@@ -93,8 +94,17 @@ export function renderLobby(root) {
     });
 
     const code = makeCode();
+    setMatchMode(mode);
     setRoomId(code);
     window.location.hash = `#/game/${code}`;
+  }
+
+  el.querySelector("#create").addEventListener("click", () => {
+    startGame("local");
+  });
+
+  el.querySelector("#cpu").addEventListener("click", () => {
+    startGame("cpu");
   });
 
   el.querySelector("#join").addEventListener("click", () => {
@@ -110,6 +120,7 @@ export function renderLobby(root) {
     }
 
     setRoomId(code);
+    setMatchMode("local");
     window.location.hash = `#/game/${code}`;
   });
 }

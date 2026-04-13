@@ -8,6 +8,7 @@ export function renderGame(root, { roomId }) {
   el.className = "page wide";
 
   const code = roomId || state.roomId || "?????";
+  const isCpuMode = state.matchMode === "cpu";
   state.roomId = code;
 
   const settings = state.settings;
@@ -27,6 +28,7 @@ export function renderGame(root, { roomId }) {
       <div>
         <h1>Game</h1>
         <p class="muted">
+          Mode: <span class="mono">${isCpuMode ? "VS CPU" : "PvP"}</span> ·
           Room: <span class="mono">${code}</span> ·
           Player: <span class="mono">${state.playerName || "?"}</span>
         </p>
@@ -106,6 +108,7 @@ export function renderGame(root, { roomId }) {
   let gameActive = false;
   let myHits = 0;
   let myMisses = 0;
+  let myShipsSunk = 0;
 
   const shipSelect = el.querySelector("#ship");
   const status = el.querySelector("#status");
@@ -186,13 +189,304 @@ export function renderGame(root, { roomId }) {
     setAllPlacedUI();
   }
 
-  socket.emit("join", {
-    roomCode: code,
-    playerName: state.playerName,
-    settings: state.settings,
-  });
+  function createCpuFleet() {
+    const grid = Array.from({ length: boardSize }, () => Array(boardSize).fill(0));
+    const ships = [];
 
-  socket.on("room_update", (data) => {
+    function canPlace({ r, c, len, horizontal }) {
+      if (horizontal) {
+        if (c + len > boardSize) return false;
+        for (let i = 0; i < len; i++) {
+          if (grid[r][c + i] !== 0) return false;
+        }
+        return true;
+      }
+
+      if (r + len > boardSize) return false;
+      for (let i = 0; i < len; i++) {
+        if (grid[r + i][c] !== 0) return false;
+      }
+      return true;
+    }
+
+    function placeShip({ r, c, len, horizontal, name }) {
+      if (!canPlace({ r, c, len, horizontal })) return false;
+
+      const ship = { name, len, hits: 0, coords: [] };
+      for (let i = 0; i < len; i++) {
+        const coord = horizontal ? { r, c: c + i } : { r: r + i, c };
+        grid[coord.r][coord.c] = 1;
+        ship.coords.push(coord);
+      }
+      ships.push(ship);
+      return true;
+    }
+
+    for (const ship of shipsToPlace) {
+      let placedOk = false;
+      let attempts = 0;
+
+      while (!placedOk && attempts < 5000) {
+        attempts++;
+        placedOk = placeShip({
+          r: Math.floor(Math.random() * boardSize),
+          c: Math.floor(Math.random() * boardSize),
+          len: ship.len,
+          horizontal: Math.random() < 0.5,
+          name: ship.key,
+        });
+      }
+
+      if (!placedOk) return createCpuFleet();
+    }
+
+    return {
+      grid,
+      ships,
+      shotsReceived: Array.from({ length: boardSize }, () => Array(boardSize).fill(0)),
+      stats: { hits: 0, misses: 0, shipsSunk: 0, sunkShips: [] },
+      targetQueue: [],
+      thinking: false,
+    };
+  }
+
+  let cpu = null;
+
+  function getAdjacentCells({ r, c }) {
+    return [
+      { r: r - 1, c },
+      { r: r + 1, c },
+      { r, c: c - 1 },
+      { r, c: c + 1 },
+    ].filter((cell) => cell.r >= 0 && cell.c >= 0 && cell.r < boardSize && cell.c < boardSize);
+  }
+
+  function isUnshotPlayerCell({ r, c }) {
+    return my.grid[r][c] === 0 || my.grid[r][c] === 1;
+  }
+
+  function randomCell(cells) {
+    return cells[Math.floor(Math.random() * cells.length)];
+  }
+
+  function getUnshotPlayerCells() {
+    const cells = [];
+    for (let r = 0; r < boardSize; r++) {
+      for (let c = 0; c < boardSize; c++) {
+        if (isUnshotPlayerCell({ r, c })) cells.push({ r, c });
+      }
+    }
+    return cells;
+  }
+
+  function chooseCpuShot() {
+    cpu.targetQueue = cpu.targetQueue.filter(isUnshotPlayerCell);
+    if (cpu.targetQueue.length) return randomCell(cpu.targetQueue);
+
+    const cells = getUnshotPlayerCells();
+    if (difficulty === "easy") return randomCell(cells);
+
+    const checkerCells = cells.filter(({ r, c }) => (r + c) % 2 === 0);
+    if (difficulty === "normal") return randomCell(checkerCells.length ? checkerCells : cells);
+
+    const scoreGrid = Array.from({ length: boardSize }, () => Array(boardSize).fill(0));
+    const remainingLengths = my.getShips().filter((ship) => (ship.hits || 0) < ship.len).map((ship) => ship.len);
+
+    for (const len of remainingLengths) {
+      for (let r = 0; r < boardSize; r++) {
+        for (let c = 0; c < boardSize; c++) {
+          for (const horizontalTry of [true, false]) {
+            const coords = [];
+            let valid = true;
+
+            for (let i = 0; i < len; i++) {
+              const nr = horizontalTry ? r : r + i;
+              const nc = horizontalTry ? c + i : c;
+              if (nr >= boardSize || nc >= boardSize || my.grid[nr][nc] === 2 || my.grid[nr][nc] === 4) {
+                valid = false;
+                break;
+              }
+              coords.push({ r: nr, c: nc });
+            }
+
+            if (!valid) continue;
+
+            const knownHits = coords.filter(({ r: nr, c: nc }) => my.grid[nr][nc] === 3).length;
+            const weight = knownHits ? 8 + knownHits * 4 : 1;
+            coords.forEach(({ r: nr, c: nc }) => {
+              if (isUnshotPlayerCell({ r: nr, c: nc })) scoreGrid[nr][nc] += weight;
+            });
+          }
+        }
+      }
+    }
+
+    let bestScore = -1;
+    let bestCells = [];
+    cells.forEach(({ r, c }) => {
+      if (scoreGrid[r][c] > bestScore) {
+        bestScore = scoreGrid[r][c];
+        bestCells = [{ r, c }];
+      } else if (scoreGrid[r][c] === bestScore) {
+        bestCells.push({ r, c });
+      }
+    });
+
+    return randomCell(bestCells.length ? bestCells : cells);
+  }
+
+  function showCpuGameOver(playerWon) {
+    gameActive = false;
+    isMyTurn = false;
+    updateStatus(playerWon ? "GAME OVER - YOU WIN" : "GAME OVER - YOU LOSE");
+
+    const sunkCpuShips = Array.from(enemyFleetList.querySelectorAll(".ship-item.sunk")).map((node) =>
+      node.id.replace("enemy-ship-", ""),
+    );
+
+    const modal = document.createElement("div");
+    modal.className = "modal";
+    modal.innerHTML = `
+      <div class="modal-card">
+        <h2>${playerWon ? "Victory" : "Defeat"}</h2>
+        <p class="muted">End-of-game summary</p>
+        <div class="hr"></div>
+        <div class="summary-grid">
+          <div>
+            <h3>You</h3>
+            <p class="mono">Hits: ${myHits} - Misses: ${myMisses}</p>
+            <p class="mono">Ships sunk: ${myShipsSunk}</p>
+            <p class="tiny muted">Sunk: ${sunkCpuShips.join(", ") || "-"}</p>
+          </div>
+          <div>
+            <h3>CPU</h3>
+            <p class="mono">Hits: ${cpu.stats.hits} - Misses: ${cpu.stats.misses}</p>
+            <p class="mono">Ships sunk: ${cpu.stats.shipsSunk}</p>
+            <p class="tiny muted">Sunk: ${cpu.stats.sunkShips.join(", ") || "-"}</p>
+          </div>
+        </div>
+        <div class="hr"></div>
+        <a class="btn" href="#/lobby">Back to lobby</a>
+      </div>
+    `;
+    document.body.appendChild(modal);
+  }
+
+  function cpuFire() {
+    if (!gameActive || isMyTurn || cpu.thinking) return;
+
+    cpu.thinking = true;
+    window.setTimeout(() => {
+      cpu.thinking = false;
+      if (!gameActive || isMyTurn) return;
+
+      const target = chooseCpuShot();
+      if (!target) return;
+
+      const hit = my.grid[target.r][target.c] === 1;
+      let sunkShipName = null;
+
+      if (hit) {
+        cpu.stats.hits++;
+        const ship = my.getShips().find((s) =>
+          s.coords.some((coord) => coord.r === target.r && coord.c === target.c),
+        );
+        if (ship) {
+          ship.hits = (ship.hits || 0) + 1;
+          if (ship.hits >= ship.len) {
+            sunkShipName = ship.name;
+            cpu.stats.shipsSunk++;
+            if (!cpu.stats.sunkShips.includes(ship.name)) cpu.stats.sunkShips.push(ship.name);
+            cpu.targetQueue = [];
+          }
+        }
+        my.markShot(target.r, target.c, "hit");
+        if (!sunkShipName) cpu.targetQueue.push(...getAdjacentCells(target));
+      } else {
+        cpu.stats.misses++;
+        my.markShot(target.r, target.c, "miss");
+      }
+
+      if (sunkShipName) my.markSunk(sunkShipName);
+
+      if (my.getShips().every((ship) => (ship.hits || 0) >= ship.len)) {
+        showCpuGameOver(false);
+        return;
+      }
+
+      if (hit) {
+        updateStatus(sunkShipName ? `CPU sunk your ${sunkShipName.toUpperCase()} and fires again...` : "CPU hit and fires again...");
+        cpuFire();
+      } else {
+        isMyTurn = true;
+        updateStatus("CPU missed. YOUR TURN. Fire!");
+      }
+    }, 650);
+  }
+
+  function startCpuGame() {
+    cpu = createCpuFleet();
+    gameActive = true;
+    isMyTurn = true;
+    setupPanel.style.display = "none";
+    setupPanel.style.pointerEvents = "none";
+    fleetPanel.style.visibility = "visible";
+    debug.textContent = "CPU placed ships and is ready.";
+    updateStatus("Game Started! YOUR TURN. Fire!");
+  }
+
+  function fireAtCpu(r, c) {
+    if (cpu.shotsReceived[r][c] !== 0) {
+      updateStatus("Already shot there! Fire somewhere else!");
+      return;
+    }
+
+    const hit = cpu.grid[r][c] === 1;
+    cpu.shotsReceived[r][c] = hit ? 3 : 2;
+    opp.markShot(r, c, hit ? "hit" : "miss");
+
+    let sunkShipName = null;
+    if (hit) {
+      myHits++;
+      hitCountEl.textContent = myHits;
+      const ship = cpu.ships.find((s) => s.coords.some((coord) => coord.r === r && coord.c === c));
+      if (ship) {
+        ship.hits++;
+        if (ship.hits >= ship.len) {
+          sunkShipName = ship.name;
+          myShipsSunk++;
+          const shipEl = el.querySelector(`#enemy-ship-${ship.name}`);
+          if (shipEl) shipEl.classList.add("sunk");
+        }
+      }
+    } else {
+      myMisses++;
+      missCountEl.textContent = myMisses;
+    }
+
+    if (cpu.ships.every((ship) => ship.hits >= ship.len)) {
+      showCpuGameOver(true);
+      return;
+    }
+
+    if (hit) {
+      updateStatus(sunkShipName ? `YOU SUNK THE CPU'S ${sunkShipName.toUpperCase()}! Fire again.` : "Direct HIT! Fire again.");
+    } else {
+      updateStatus("Missed! CPU's turn...");
+      isMyTurn = false;
+      cpuFire();
+    }
+  }
+
+  if (!isCpuMode) {
+    socket.emit("join", {
+      roomCode: code,
+      playerName: state.playerName,
+      settings: state.settings,
+    });
+  }
+
+  if (!isCpuMode) socket.on("room_update", (data) => {
     const count = data.players.length;
     const readyCount = data.players.filter((p) => p.ready).length;
     debug.textContent = `Players in room: ${count}. Ready: ${readyCount}`;
@@ -218,8 +512,12 @@ export function renderGame(root, { roomId }) {
   }
 
   renderEnemyFleet();
+  if (isCpuMode) {
+    updateStatus("Place your ships, then click Ready.");
+    debug.textContent = "CPU opponent selected.";
+  }
 
-  socket.on("game_start", (data) => {
+  if (!isCpuMode) socket.on("game_start", (data) => {
     gameActive = true;
     setupPanel.style.display = "none";
     setupPanel.style.pointerEvents = "none";
@@ -233,12 +531,12 @@ export function renderGame(root, { roomId }) {
     );
   });
 
-  socket.on("turn_change", (data) => {
+  if (!isCpuMode) socket.on("turn_change", (data) => {
     isMyTurn = data.turn === socket.id;
     updateStatus(isMyTurn ? "YOUR TURN. Fire!" : "Opponent's turn...");
   });
 
-  socket.on("shot_result", (data) => {
+  if (!isCpuMode) socket.on("shot_result", (data) => {
     const iShot = data.shooter === socket.id;
 
     if (iShot) {
@@ -270,7 +568,7 @@ export function renderGame(root, { roomId }) {
     }
   });
 
-  socket.on("game_over", (data) => {
+  if (!isCpuMode) socket.on("game_over", (data) => {
     gameActive = false;
     isMyTurn = false;
 
@@ -358,9 +656,15 @@ export function renderGame(root, { roomId }) {
       return;
     }
 
-    updateStatus("Waiting for other player...");
     el.querySelector("#ready").disabled = true;
     el.querySelector("#reset").disabled = true;
+
+    if (isCpuMode) {
+      startCpuGame();
+      return;
+    }
+
+    updateStatus("Waiting for other player...");
 
     socket.emit("place_ships", {
       roomCode: code,
@@ -373,6 +677,11 @@ export function renderGame(root, { roomId }) {
     if (!gameActive) return;
     if (!isMyTurn) {
       updateStatus("Not your turn!");
+      return;
+    }
+
+    if (isCpuMode) {
+      fireAtCpu(r, c);
       return;
     }
 
