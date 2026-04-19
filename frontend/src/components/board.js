@@ -6,8 +6,9 @@ export function createBoard({ size = 10, mode = "place" }) {
   const grid = Array.from({ length: size }, () => Array(size).fill(0));
   let clickHandler = null;
   const ships = [];
+  const cells = Array.from({ length: size }, () => Array(size).fill(null));
 
-  function render() {
+  function initDOM() {
     el.innerHTML = "";
     el.style.setProperty("--n", size);
 
@@ -19,23 +20,33 @@ export function createBoard({ size = 10, mode = "place" }) {
         cell.dataset.r = r;
         cell.dataset.c = c;
 
-        const v = grid[r][c];
-
-        if (v === 1) cell.classList.add("ship");
-        if (v === 2) cell.classList.add("miss");
-        if (v === 3) cell.classList.add("hit");
-        if (v === 4) {
-          cell.classList.add("ship");
-          cell.classList.add("hit");
-          cell.classList.add("sunk");
-        }
-        if (v === 5) cell.classList.add("sonar");
-
         cell.addEventListener("click", () => {
           if (clickHandler) clickHandler(r, c);
         });
 
         el.appendChild(cell);
+        cells[r][c] = cell;
+      }
+    }
+  }
+  initDOM();
+
+  function render() {
+    for (let r = 0; r < size; r++) {
+      for (let c = 0; c < size; c++) {
+        const cell = cells[r][c];
+        const v = grid[r][c];
+
+        let newClass = "cell";
+        if (v === 1) newClass += " ship";
+        if (v === 2) newClass += " miss";
+        if (v === 3) newClass += " hit";
+        if (v === 4) newClass += " ship hit sunk";
+        if (v === 5) newClass += " sonar";
+
+        if (cell.className !== newClass) {
+          cell.className = newClass;
+        }
       }
     }
   }

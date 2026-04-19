@@ -503,9 +503,17 @@ function makeRoomCode() {
 }
 
 function createRoomPlayer(socketId, name, user) {
+  let finalName = name;
+  if (!finalName || finalName === "?" || finalName === "Guest") {
+    finalName = "Player";
+  }
+  if (!user && finalName === "Player") {
+    finalName = `Player_${socketId.substring(0, 4)}`;
+  }
+
   return {
     id: socketId,
-    name: name || "Player",
+    name: finalName,
     userId: user?.id || null,
     userMetadata: user?.user_metadata || {},
     board: null,
@@ -820,6 +828,7 @@ io.on("connection", (socket) => {
 
     // Track ship damage
     let sunkShipName = null;
+    let sunkShipCoords = null;
     if (isHit) {
       // Find which ship was hit
       const ship = opponent.ships.find((s) =>
@@ -830,6 +839,7 @@ io.on("connection", (socket) => {
         ship.hits += 1;
         if (ship.hits === ship.len) {
           sunkShipName = ship.name;
+          sunkShipCoords = ship.coords;
 
           // record shooter sunk ship
           shooter.stats.shipsSunk += 1;
@@ -847,6 +857,7 @@ io.on("connection", (socket) => {
       c,
       hit: isHit,
       sunk: sunkShipName,
+      sunkCoords: sunkShipCoords,
     });
 
     // Win condition: all opponent ships sunk
@@ -873,8 +884,7 @@ io.on("connection", (socket) => {
     }
 
     // Switch turn only if miss (isHit == false)
-        // Switch turn only if miss (isHit == false)
-    if (isHit == false) {
+    if (isHit === false) {
       if (shooter.doubleShotActive) {
         shooter.doubleShotActive = false;
         socket.emit("bonus_turn", { message: "Miss! First shot fired. Double Shot is active, fire second shot!" });
@@ -894,7 +904,9 @@ io.on("connection", (socket) => {
 
     const pIds = Object.keys(room.players);
     const opponentId = pIds.find((id) => id !== socket.id);
-
+    const shooter = room.players[socket.id];
+    
+    shooter.doubleShotActive = false;
     room.turn = opponentId;
     io.to(code).emit("turn_change", { turn: room.turn });
   });

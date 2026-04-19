@@ -289,9 +289,11 @@ export function renderGame(root, { roomId }) {
     updateStatus("Double shot activated! Your next miss won't end your turn.");
     doubleShotCount = data.remaining;
     countDoubleShot.textContent = doubleShotCount;
+    document.body.classList.add("double-shot-active");
   });
 
   socket.on("bonus_turn", (data) => {
+    document.body.classList.remove("double-shot-active");
     updateStatus(data.message);
     isMyTurn = true;
     startTimer();
@@ -357,6 +359,7 @@ export function renderGame(root, { roomId }) {
   });
 
   socket.on("turn_change", (data) => {
+    document.body.classList.remove("double-shot-active");
     isMyTurn = data.turn === socket.id;
     updateStatus(isMyTurn ? "YOUR TURN. Fire!" : "Opponent's turn...");
     
@@ -367,6 +370,16 @@ export function renderGame(root, { roomId }) {
   socket.on("shot_result", (data) => {
     // data = { shooter, r, c, hit }
     const iShot = data.shooter === socket.id;
+    
+    // Shake board on hit
+    if (data.hit && !data.sunk) {
+      const targetBoard = iShot ? opp.el : my.el;
+      targetBoard.classList.remove("shake-board");
+      void targetBoard.offsetWidth; // trigger reflow
+      targetBoard.classList.add("shake-board");
+      setTimeout(() => targetBoard.classList.remove("shake-board"), 400);
+    }
+
     if (iShot) {
       // I shot at opponent
       opp.markShot(data.r, data.c, data.hit ? "hit" : "miss");
@@ -392,6 +405,13 @@ export function renderGame(root, { roomId }) {
 
     if (data.sunk) {
       const iSunkIt = data.shooter === socket.id;
+
+      const targetBoard = iSunkIt ? opp.el : my.el;
+      targetBoard.classList.remove("shake-board-heavy");
+      void targetBoard.offsetWidth; // trigger reflow
+      targetBoard.classList.add("shake-board-heavy");
+      setTimeout(() => targetBoard.classList.remove("shake-board-heavy"), 600);
+
       if (iSunkIt) {
         // I sunk opponent's ship
         myShipsSunk++;
@@ -399,6 +419,10 @@ export function renderGame(root, { roomId }) {
         const shipEl = el.querySelector(`#enemy-ship-${data.sunk}`);
         if (shipEl) {
           shipEl.classList.add("sunk");
+        }
+        if (data.sunkCoords) {
+          opp.getShips().push({ name: data.sunk, coords: data.sunkCoords });
+          opp.markSunk(data.sunk);
         }
       } else {
         // My ship was sunk
@@ -548,7 +572,7 @@ export function renderGame(root, { roomId }) {
       updateStatus("No double shot available!");
       return;
     }
-    // Instantly activate
+    // Request activation from server
     socket.emit("activate_double_shot", { roomCode: code });
     activePowerup = null;
     powerupStatus.textContent = "Select a power-up to use";
