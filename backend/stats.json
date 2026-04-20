@@ -37,15 +37,15 @@
   },
   "vanselme1": {
     "name": "vanselme1",
-    "elo": 1029,
-    "wins": 2,
+    "elo": 1044,
+    "wins": 3,
     "losses": 0,
     "powerups": {
-      "sonar": 3,
-      "doubleShot": 1
+      "sonar": 2,
+      "doubleShot": 0
     },
-    "currentWinStreak": 2,
-    "highestEloReached": 1029
+    "currentWinStreak": 3,
+    "highestEloReached": 1044
   },
   "prkrshld": {
     "name": "prkrshld",
@@ -85,12 +85,12 @@
   },
   "password": {
     "name": "password",
-    "elo": 1000,
+    "elo": 985,
     "wins": 0,
-    "losses": 0,
+    "losses": 1,
     "powerups": {
       "sonar": 1,
-      "doubleShot": 1
+      "doubleShot": 0
     },
     "currentWinStreak": 0,
     "highestEloReached": 1000

@@ -318,7 +318,7 @@ export function renderLobby(root, options = {}) {
           <option value="normal">Normal</option>
           <option value="hard">Hard</option>
         </select>
-        <button class="btn" id="create">Start game vs CPU</button>
+        <button class="btn" id="createCpu">Start game vs CPU</button>
         <p class="tiny muted">Generates a code and takes you to the game.</p>
         <button class="btn ghost" id="backToLobby" style="margin-top:10px;">Go Back</button>
       </div>
@@ -326,6 +326,34 @@ export function renderLobby(root, options = {}) {
 
     wireRoomActions();
     wireBackToLobby();
+
+    const createCpuBtn = el.querySelector("#createCpu");
+    const boardSizeSelect = el.querySelector("#boardSize");
+    const shipPresetSelect = el.querySelector("#shipPreset");
+    const difficultySelect = el.querySelector("#difficulty");
+
+    if (createCpuBtn) {
+      createCpuBtn.addEventListener("click", () => {
+        if (!state.playerName || state.playerName.length < 2) {
+          window.location.hash = "#/";
+          return;
+        }
+
+        setMatchMode("cpu");
+
+        if (boardSizeSelect && shipPresetSelect && difficultySelect) {
+          applyShipPreset(shipPresetSelect.value);
+          setSettings({
+            boardSize: Number(boardSizeSelect.value),
+            difficulty: difficultySelect.value,
+          });
+        }
+
+        const code = makeCode();
+        setRoomId(code);
+        window.location.hash = `#/game/${code}`;
+      });
+    }
   };
 
   const showPlayerVsOptions = () => {

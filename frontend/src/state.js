@@ -80,7 +80,7 @@ export function setRoomId(roomId) {
 }
 
 export function setMatchMode(mode) {
-  state.matchMode = mode === "ranked" ? "ranked" : "local";
+  state.matchMode = ["ranked", "cpu"].includes(mode) ? mode : "local";
   localStorage.setItem("bs_matchMode", state.matchMode);
 
   if (state.matchMode === "ranked") {
