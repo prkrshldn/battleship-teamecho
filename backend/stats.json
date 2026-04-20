@@ -41,8 +41,8 @@
     "wins": 3,
     "losses": 0,
     "powerups": {
-      "sonar": 2,
-      "doubleShot": 0
+      "sonar": 6,
+      "doubleShot": 4
     },
     "currentWinStreak": 3,
     "highestEloReached": 1044
@@ -89,7 +89,7 @@
     "wins": 0,
     "losses": 1,
     "powerups": {
-      "sonar": 1,
+      "sonar": 0,
       "doubleShot": 0
     },
     "currentWinStreak": 0,

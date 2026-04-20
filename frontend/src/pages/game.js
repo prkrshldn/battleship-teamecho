@@ -107,6 +107,10 @@ export function renderGame(root, { roomId }) {
           <div id="oppBoard"></div>
         </div>
       </div>
+
+      <div class="ad-panel" id="ad-panel">
+        <!-- Rendered by JS -->
+      </div>
     </div>
   `;
 
@@ -118,6 +122,56 @@ export function renderGame(root, { roomId }) {
 
   el.querySelector("#myBoard").appendChild(my.el);
   el.querySelector("#oppBoard").appendChild(opp.el);
+
+  // --- Ads Logic ---
+  const ads = [
+    {
+      title: "G-Pro X Superlight",
+      copy: "Elevate your aim with the lightest gaming mouse. Zero resistance.",
+      gradient: "linear-gradient(135deg, #ff007f, #7000ff, #00f0ff)",
+      icon: "🖱️"
+    },
+    {
+      title: "Cyber Drink Energy",
+      copy: "Stay frosty and focused. Sugar-free energy for long gaming sessions.",
+      gradient: "linear-gradient(135deg, #0f2027, #203a43, #2c5364)",
+      icon: "⚡"
+    },
+    {
+      title: "CodeCamp JS Bootcamp",
+      copy: "Master Javascript in 30 days. Build amazing web apps from scratch.",
+      gradient: "linear-gradient(135deg, #fceabb, #f8b500, #ff416c)",
+      icon: "💻"
+    },
+    {
+      title: "Nova 7 Wireless",
+      copy: "Immersive 3D audio. Hear them before they see you.",
+      gradient: "linear-gradient(135deg, #4b6cb7, #182848, #ff00f0)",
+      icon: "🎧"
+    },
+    {
+      title: "ErgoChair Pro",
+      copy: "Posture perfect. Support your back through endless campaigns.",
+      gradient: "linear-gradient(135deg, #ff416c, #ff4b2b, #fceabb)",
+      icon: "💺"
+    }
+  ];
+
+  function renderAd() {
+    const adPanel = el.querySelector("#ad-panel");
+    const ad = ads[Math.floor(Math.random() * ads.length)];
+    adPanel.innerHTML = `
+      <span class="ad-tag">Advertisement</span>
+      <div class="ad-image animated-grad" style="background: ${ad.gradient};">
+        <div class="ad-icon-wrap">
+          <span class="ad-icon">${ad.icon}</span>
+        </div>
+      </div>
+      <p class="ad-title">${ad.title}</p>
+      <p class="ad-copy">${ad.copy}</p>
+    `;
+  }
+  renderAd();
 
   // --- State Variables ---
   let horizontal = true;

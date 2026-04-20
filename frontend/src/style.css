@@ -161,6 +161,112 @@ button:focus-visible {
   justify-content: center;
 }
 
+.ad-panel {
+  flex: 0 0 260px;
+  background: var(--panel-bg);
+  backdrop-filter: var(--glass-blur);
+  -webkit-backdrop-filter: var(--glass-blur);
+  border: 1px solid var(--panel-border);
+  color: #eee;
+  padding: 1.5rem;
+  border-radius: 16px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2);
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  text-align: center;
+}
+
+.ad-panel .ad-tag {
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  color: var(--accent-glow);
+  letter-spacing: 1px;
+  align-self: flex-start;
+  margin-bottom: -0.5rem;
+}
+
+.ad-image {
+  width: 100%;
+  aspect-ratio: 1 / 1;
+  border-radius: 8px;
+  object-fit: cover;
+  box-shadow: 0 4px 15px rgba(0,0,0,0.4), inset 0 0 20px rgba(0,0,0,0.3);
+  border: 1px solid rgba(255,255,255,0.15);
+  transition: transform 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.ad-panel:hover .ad-image {
+  transform: scale(1.05) translateY(-5px);
+  box-shadow: 0 10px 25px rgba(0, 240, 255, 0.4);
+  border-color: rgba(0, 240, 255, 0.5);
+}
+
+@keyframes slideGradient {
+  0% { background-position: 0% 50%; }
+  50% { background-position: 100% 50%; }
+  100% { background-position: 0% 50%; }
+}
+
+.animated-grad {
+  background-size: 300% 300% !important;
+  animation: slideGradient 6s ease-in-out infinite;
+  position: relative;
+  overflow: hidden;
+}
+
+@keyframes sweepGlare {
+  0% { left: -100%; }
+  25%, 100% { left: 200%; }
+}
+
+.animated-grad::after {
+  content: "";
+  position: absolute;
+  top: 0; left: -100%;
+  width: 50%; height: 100%;
+  background: linear-gradient(to right, transparent, rgba(255,255,255,0.35), transparent);
+  transform: skewX(-25deg);
+  animation: sweepGlare 4s infinite;
+  pointer-events: none;
+}
+
+@keyframes floatIcon {
+  0%, 100% { transform: translateY(0) scale(1); }
+  50% { transform: translateY(-12px) scale(1.15); filter: drop-shadow(0 15px 15px rgba(0,0,0,0.6)); }
+}
+
+.ad-icon-wrap {
+  font-size: 5rem;
+  z-index: 2;
+  animation: floatIcon 3.5s ease-in-out infinite;
+}
+
+.ad-icon {
+  display: inline-block;
+  text-shadow: 0 0 20px rgba(0, 0, 0, 0.5);
+}
+
+.ad-title {
+  font-weight: 800;
+  font-size: 1.15rem;
+  margin: 0;
+  color: #fff;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+}
+
+.ad-copy {
+  font-size: 0.9rem;
+  color: var(--text-muted);
+  margin: 0;
+  line-height: 1.4;
+}
+
+
 /* --- Utilities --- */
 .row {
   display: flex;
