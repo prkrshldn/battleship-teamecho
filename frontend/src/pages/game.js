@@ -500,7 +500,9 @@ export function renderGame(root, { roomId }) {
     stopTimer();
 
     const iWon = data.winnerId === socket.id;
-    updateStatus(iWon ? "GAME OVER — YOU WIN 🏆" : "GAME OVER — YOU LOSE");
+    const isForfeit = data.forfeit;
+    updateStatus(iWon ? `GAME OVER — YOU WIN 🏆 ${isForfeit ? "(Opponent Forfeited)" : ""}` : `GAME OVER — YOU LOSE ${isForfeit ? "(You Forfeited)" : ""}`);
+
 
     const mySummary = data.summary[socket.id];
     const oppId = Object.keys(data.summary).find((id) => id !== socket.id);
@@ -534,7 +536,7 @@ export function renderGame(root, { roomId }) {
     modal.className = "modal";
     modal.innerHTML = `
       <div class="modal-card">
-        <h2>${iWon ? "Victory" : "Defeat"}</h2>
+        <h2>${iWon ? "Victory" : "Defeat"} ${isForfeit ? "<span style='font-size: 0.6em; color: #f87171;'>(Forfeit)</span>" : ""}</h2>
         <p class="muted">End-of-game summary</p>
         <div class="hr"></div>
         <div class="summary-grid">
@@ -565,9 +567,25 @@ export function renderGame(root, { roomId }) {
 
     // stop listening to turn events so it doesn't flicker status after game end
     socket.off("turn_change");
+    socket.off("opponent_disconnected");
+  });
+
+  socket.on("opponent_disconnected", (data) => {
+    updateStatus(`Opponent disconnected! They have ${data.timeout}s to reconnect or they forfeit...`);
   });
 
   // --- Event Listeners ---
+
+  const leaveBtn = el.querySelector(".topbar a.btn");
+  leaveBtn.addEventListener("click", (e) => {
+    if (gameActive && !isCpuMode) {
+      if (!confirm("Leaving now will forfeit the game. Are you sure?")) {
+        e.preventDefault();
+      } else {
+        socket.emit("forfeit", { roomCode: code });
+      }
+    }
+  });
 
   // Rotate
   el.querySelector("#rotate").addEventListener("click", () => {

@@ -966,10 +966,94 @@ io.on("connection", (socket) => {
     socket.emit("double_shot_activated", { remaining: stats.powerups.doubleShot });
   });
 
+  socket.on("forfeit", async ({ roomCode }) => {
+    const code = roomCode.toUpperCase();
+    const room = rooms[code];
+    if (!room || room.state !== "playing" || !room.players[socket.id]) return;
+
+    room.state = "ended";
+    const pIds = Object.keys(room.players);
+    const opponentId = pIds.find((id) => id !== socket.id);
+    const loser = room.players[socket.id];
+    const winner = room.players[opponentId];
+
+    if (!winner) return;
+
+    if (room.disconnectTimeout) {
+      clearTimeout(room.disconnectTimeout);
+    }
+
+    const summary = buildGameSummary(room);
+    let eloChanges = null;
+
+    if (room.mode === "ranked") {
+      const winnerLostShipsCount = (winner.ships || []).filter((s) => s.hits >= s.len).length;
+      eloChanges = updateElo(winner.name, loser.name, winnerLostShipsCount);
+      await syncMatchStatsToSupabase(winner, loser);
+    }
+
+    io.to(code).emit("game_over", {
+      winnerId: opponentId,
+      loserId: socket.id,
+      mode: room.mode,
+      summary,
+      eloChanges,
+      forfeit: true,
+    });
+  });
+
   socket.on("disconnect", () => {
     removeFromRankedQueue(socket.id);
-    // Cleanup logic could go here
     console.log(`User disconnected: ${socket.id}`);
+
+    // Detect if they were in a game
+    for (const [code, room] of Object.entries(rooms)) {
+      if (room.players[socket.id]) {
+        if (room.state === "playing") {
+          const pIds = Object.keys(room.players);
+          const opponentId = pIds.find((id) => id !== socket.id);
+
+          if (opponentId) {
+            io.to(opponentId).emit("opponent_disconnected", { timeout: 60 });
+          }
+
+          room.disconnectTimeout = setTimeout(async () => {
+            if (room.state !== "playing") return;
+            room.state = "ended";
+
+            const loser = room.players[socket.id];
+            const winner = room.players[opponentId];
+            if (!loser || !winner) return;
+
+            const summary = buildGameSummary(room);
+            let eloChanges = null;
+
+            if (room.mode === "ranked") {
+              const winnerLostShipsCount = (winner.ships || []).filter((s) => s.hits >= s.len).length;
+              eloChanges = updateElo(winner.name, loser.name, winnerLostShipsCount);
+              await syncMatchStatsToSupabase(winner, loser);
+            }
+
+            io.to(code).emit("game_over", {
+              winnerId: opponentId,
+              loserId: socket.id,
+              mode: room.mode,
+              summary,
+              eloChanges,
+              forfeit: true,
+            });
+          }, 60000);
+        } else if (room.state === "waiting") {
+          const pIds = Object.keys(room.players);
+          const opponentId = pIds.find((id) => id !== socket.id);
+          if (opponentId) {
+            io.to(opponentId).emit("join_error", { message: "Opponent left the room." });
+          }
+          delete rooms[code];
+        }
+        break; // found the room
+      }
+    }
   });
 });
 
