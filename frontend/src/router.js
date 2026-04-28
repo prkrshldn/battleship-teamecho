@@ -3,6 +3,7 @@ import { renderLobby } from "./pages/lobby";
 import { renderGame } from "./pages/game";
 import { renderLogin } from "./pages/login";
 import { renderLeaderboard } from "./pages/leaderboard";
+import { renderRanks } from "./pages/ranks";
 import { initializeAuth, isAuthenticated } from "./auth";
 
 function getApp() {
@@ -54,6 +55,7 @@ function render() {
   if (route === "lobby") return renderLobby(app);
   if (route === "game") return renderGame(app, { roomId: param });
   if (route === "leaderboard") return renderLeaderboard(app);
+  if (route === "ranks") return renderRanks(app);
 
   // fallback
   app.innerHTML = `

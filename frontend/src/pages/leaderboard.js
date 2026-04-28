@@ -1,4 +1,5 @@
 import { getCurrentUser, logout } from "../auth";
+import { getRank } from "../util/rank";
 
 const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || "http://localhost:9999";
 
@@ -79,16 +80,22 @@ export function renderLeaderboard(root) {
         </tr>
       </thead>
       <tbody>
-        ${players.map((player, index) => `
+        ${players.map((player, index) => {
+          const rank = getRank(player.elo);
+          return `
           <tr style="border-bottom: 1px solid #333; background: #0f0f0f;">
             <td style="padding: 10px; color: #fff; font-weight: bold;">${top3(players, index)}</td>
-            <td style="padding: 10px; color: #fff;">${player.name || "Unknown"}</td>
-            <td style="text-align: center; padding: 10px; color: #4dd0e1;">${player.elo || 1000}</td>
+            <td style="padding: 10px; color: #fff; display: flex; align-items: center; gap: 8px;" title="${rank.name}">
+              ${rank.svg}
+              ${player.name || "Unknown"}
+            </td>
+            <td style="text-align: center; padding: 10px; color: ${rank.color}; font-weight: bold;">${player.elo || 1000}</td>
             <td style="text-align: center; padding: 10px; color: #66bb6a;">${player.wins || 0}</td>
             <td style="text-align: center; padding: 10px; color: #ef5350;">${player.losses || 0}</td>
             <td style="text-align: center; padding: 10px; color: #ffd54f;">${player.highestEloReached || player.elo || 1000}</td>
           </tr>
-        `).join("")}
+        `;
+        }).join("")}
       </tbody>
     `;
 

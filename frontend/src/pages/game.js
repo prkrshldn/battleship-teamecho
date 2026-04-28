@@ -2,6 +2,8 @@ import { state } from "../state";
 import { createBoard } from "../components/board";
 import { socket, connectSocket } from "../socket";
 import { getShipInfo } from "../util/shipGetInfo";
+import { getRank } from "../util/rank";
+import { getCurrentUser } from "../auth";
 
 export function renderGame(root, { roomId }) {
   const el = document.createElement("div");
@@ -29,12 +31,16 @@ export function renderGame(root, { roomId }) {
       : "";
 
 
+  const user = getCurrentUser();
+  const playerCurrentElo = user?.user_metadata?.current_elo || 1000;
+  const playerRank = getRank(playerCurrentElo);
+
   // --- HTML Layout ---
   el.innerHTML = `
     <div class="topbar">
       <div>
         <h1>Game</h1>
-        <p class="muted">Mode: <span class="mono">${isCpuMode ? "VS CPU" : matchMode}</span> · Room: <span class="mono">${code}</span> · Player: <span class="mono">${state.playerName || "?"}</span></p>
+        <p class="muted">Mode: <span class="mono">${isCpuMode ? "VS CPU" : matchMode}</span> · Room: <span class="mono">${code}</span> · Player: <span class="mono" style="display:inline-flex; align-items:center; gap:4px; vertical-align:middle; margin-top:-4px;">${playerRank.svg} ${state.playerName || "?"}</span></p>
         ${settingsSummaryHtml}
         <a class="btn" href="#/lobby">Leave</a>
       </div>
@@ -514,12 +520,36 @@ export function renderGame(root, { roomId }) {
     if (data.eloChanges) {
       const myEloChange = iWon ? `+${data.eloChanges.winnerGain}` : `${data.eloChanges.loserLoss}`;
       const myNewElo = iWon ? data.eloChanges.winnerNewElo : data.eloChanges.loserNewElo;
+      const myOldElo = iWon ? data.eloChanges.winnerOldElo : data.eloChanges.loserOldElo;
+      const myOldRank = getRank(myOldElo);
+      const myNewRank = getRank(myNewElo);
 
       const oppEloChange = !iWon ? `+${data.eloChanges.winnerGain}` : `${data.eloChanges.loserLoss}`;
       const oppNewElo = !iWon ? data.eloChanges.winnerNewElo : data.eloChanges.loserNewElo;
+      const oppNewRank = getRank(oppNewElo);
 
-      myEloHtml = `<p class="mono" style="color: ${iWon ? '#4ade80' : '#f87171'}">ELO: ${myNewElo} (${myEloChange})</p>`;
-      oppEloHtml = `<p class="mono" style="color: ${!iWon ? '#4ade80' : '#f87171'}">ELO: ${oppNewElo} (${oppEloChange})</p>`;
+      myEloHtml = `<div style="display: flex; align-items: center; gap: 8px;">
+        ${myNewRank.svg}
+        <p class="mono" style="color: ${iWon ? '#4ade80' : '#f87171'}; margin: 0;">ELO: ${myNewElo} (${myEloChange})</p>
+      </div>`;
+      oppEloHtml = `<div style="display: flex; align-items: center; gap: 8px;">
+        ${oppNewRank.svg}
+        <p class="mono" style="color: ${!iWon ? '#4ade80' : '#f87171'}; margin: 0;">ELO: ${oppNewElo} (${oppEloChange})</p>
+      </div>`;
+
+      if (myNewRank.level > myOldRank.level) {
+        powerupMsg = `<div class="rank-up-anim">
+          <h3 style="color: #4ade80; margin: 0;">RANK UP!</h3>
+          ${myNewRank.svg}
+          <p style="font-weight: bold; margin: 0; color: ${myNewRank.color}">${myNewRank.name}</p>
+        </div>` + powerupMsg;
+      } else if (myNewRank.level < myOldRank.level) {
+        powerupMsg = `<div class="rank-down-anim">
+          <h3 style="color: #f87171; margin: 0;">RANK DOWN</h3>
+          ${myNewRank.svg}
+          <p style="font-weight: bold; margin: 0; color: ${myNewRank.color}">${myNewRank.name}</p>
+        </div>` + powerupMsg;
+      }
 
       if (iWon && data.eloChanges.winnerPowerupAwarded) {
         powerupMsg = `<p style="color: #fbbf24; font-weight: bold; margin-bottom: 2px;">🎁 Win Reward: 1x ${data.eloChanges.winnerPowerupAwarded === 'sonar' ? 'Sonar' : 'Double Shot'}!</p>`;

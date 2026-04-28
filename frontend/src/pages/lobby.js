@@ -8,6 +8,7 @@ import {
   setSettings,
   applyShipPreset,
 } from "../state";
+import { getRank } from "../util/rank";
 
 let cleanupLobbySocketHandlers = null;
 
@@ -30,7 +31,7 @@ export function renderLobby(root, options = {}) {
           <div class="settings" id="settings" title="Account settings">
             <i class="fa-solid fa-gear"></i>
           </div>
-          <p>Logged in as: <span id="playerName">${getCurrentUser()?.user_metadata?.username || "Unknown"}</span></p>
+          <p>Logged in as: <span id="playerName" style="display:inline-flex; align-items:center; gap:6px; vertical-align:middle;"></span></p>
         </div>
       </div>
       <div class="hr"></div>
@@ -64,7 +65,15 @@ export function renderLobby(root, options = {}) {
   if (accountUsername && accountUsername !== state.playerName) {
     setPlayerName(accountUsername);
   }
-  playerNameEl.textContent = state.playerName || accountUsername || "Unknown";
+  let playerCurrentElo = getCurrentUser()?.user_metadata?.current_elo || 1000;
+  
+  const updatePlayerName = (name) => {
+    const rank = getRank(playerCurrentElo);
+    if (playerNameEl) {
+      playerNameEl.innerHTML = `${rank.svg} ${name}`;
+    }
+  };
+  updatePlayerName(state.playerName || accountUsername || "Unknown");
 
   const makeCode = () => {
     const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
@@ -76,7 +85,6 @@ export function renderLobby(root, options = {}) {
   };
 
   const modeOrRoomGrid = el.querySelector("#modeOrRoomGrid");
-  let playerCurrentElo = getCurrentUser()?.user_metadata?.current_elo || 1000;
 
   const syncPageWidthFromModeGrid = () => {
     const gridWidth = modeOrRoomGrid.getBoundingClientRect().width;
@@ -364,13 +372,17 @@ export function renderLobby(root, options = {}) {
           <h2>Play mode</h2>
           <button class="lobby-btn" id="modeLocal">Local Match (Room Code)</button>
           <button class="lobby-btn" id="modeRanked" style="margin-top:10px;">Ranked Matchmaking</button>
-          <button id="viewLeaderboard" class="btn ghost">View Ranked Leaderboard</button>
+          <div style="display: flex; gap: 10px; margin-top: 10px;">
+            <button id="viewLeaderboard" class="btn ghost" style="flex: 1;">View Ranked Leaderboard</button>
+            <button id="viewRanks" class="btn ghost" style="flex: 1;">View Competitive Ranks</button>
+          </div>
         </div>
       `;
           
       el.querySelector("#modeLocal").addEventListener("click", showRoomOptions);
       el.querySelector("#modeRanked").addEventListener("click", showRankedOptions);
       el.querySelector("#viewLeaderboard").addEventListener("click", showLeaderboard);
+      el.querySelector("#viewRanks").addEventListener("click", showRanks);
 
     wireRoomActions();
     wireBackToLobby();
@@ -379,6 +391,14 @@ export function renderLobby(root, options = {}) {
   const showLeaderboard = () => {
     lobbyView = "lb";
     window.location.hash = "#/leaderboard";
+    
+    wireRoomActions();
+    wireBackToLobby();
+  };
+
+  const showRanks = () => {
+    lobbyView = "ranks";
+    window.location.hash = "#/ranks";
     
     wireRoomActions();
     wireBackToLobby();
@@ -464,7 +484,7 @@ export function renderLobby(root, options = {}) {
 
       await updateUsername(trimmedName);
       setPlayerName(trimmedName);
-      if (playerNameEl) playerNameEl.textContent = trimmedName;
+      updatePlayerName(trimmedName);
       lobbyMessage.textContent = "Username updated.";
     } catch (error) {
       lobbyMessage.textContent = error.message || "Failed to update username.";
@@ -490,7 +510,7 @@ export function renderLobby(root, options = {}) {
         <div class="settings" id="closeSettings" title="Close settings">
           <i class="fa-solid fa-x"></i>
         </div>
-        <p>Logged in as: <span id="playerName">${getCurrentUser()?.user_metadata?.username || "Unknown"}</span></p>
+        <p>Logged in as: <span id="playerNameSettings" style="display:inline-flex; align-items:center; gap:6px; vertical-align:middle;">${getRank(playerCurrentElo).svg} ${state.playerName || accountUsername || "Unknown"}</span></p>
       </div>
       <div style="padding-top:30px;display:flex;flex-direction:column;gap:12px;height:100%;">
         <h2 style="margin:0;color:#fff;">Settings</h2>
