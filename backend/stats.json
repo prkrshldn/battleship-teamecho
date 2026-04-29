@@ -94,5 +94,29 @@
     },
     "currentWinStreak": 0,
     "highestEloReached": 1000
+  },
+  "Poopy": {
+    "name": "Poopy",
+    "elo": 1000,
+    "wins": 0,
+    "losses": 0,
+    "powerups": {
+      "sonar": 0,
+      "doubleShot": 0
+    },
+    "currentWinStreak": 0,
+    "highestEloReached": 1000
+  },
+  "th3skeleton2": {
+    "name": "th3skeleton2",
+    "elo": 1000,
+    "wins": 0,
+    "losses": 0,
+    "powerups": {
+      "sonar": 1,
+      "doubleShot": 1
+    },
+    "currentWinStreak": 0,
+    "highestEloReached": 1000
   }
 }

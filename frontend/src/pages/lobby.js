@@ -505,6 +505,10 @@ export function renderLobby(root, options = {}) {
     cardEl.style.boxSizing = "border-box";
     cardEl.style.overflow = "hidden";
 
+    const wins = getCurrentUser()?.user_metadata?.wins || 0;
+    const losses = getCurrentUser()?.user_metadata?.losses || 0;
+    const best_elo = getCurrentUser()?.user_metadata?.best_elo || playerCurrentElo;
+
     cardEl.innerHTML = `
       <div style="display: flex; justify-content: space-between; align-items: center;">
         <div class="settings" id="closeSettings" title="Close settings">
@@ -512,11 +516,36 @@ export function renderLobby(root, options = {}) {
         </div>
         <p>Logged in as: <span id="playerNameSettings" style="display:inline-flex; align-items:center; gap:6px; vertical-align:middle;">${getRank(playerCurrentElo).svg} ${state.playerName || accountUsername || "Unknown"}</span></p>
       </div>
-      <div style="padding-top:30px;display:flex;flex-direction:column;gap:12px;height:100%;">
-        <h2 style="margin:0;color:#fff;">Settings</h2>
-        <p class="tiny" style="margin:0;color:#cfcfcf;">Manage your account from here.</p>
-        <button id="logout" class="btn">Logout</button>
-        <button id="changeUsername" class="btn">Change username</button>
+      <div style="padding-top:30px;display:flex;flex-direction:column;gap:12px;height:100%;overflow-y:auto;">
+        <h2 style="margin:0;color:#fff;">Profile</h2>
+        
+        <div style="background: #1a1a1a; border: 1px solid #444; border-radius: 6px; padding: 16px; display:grid; grid-template-columns: 1fr 1fr; gap:12px;">
+          <div style="text-align: center;">
+            <p class="tiny" style="margin: 0 0 4px 0; color:#999;">Wins</p>
+            <p style="margin: 0; font-size: 24px; color: #4ade80; font-weight: bold;">${wins}</p>
+          </div>
+          <div style="text-align: center;">
+            <p class="tiny" style="margin: 0 0 4px 0; color:#999;">Losses</p>
+            <p style="margin: 0; font-size: 24px; color: #f87171; font-weight: bold;">${losses}</p>
+          </div>
+          <div style="text-align: center;">
+            <p class="tiny" style="margin: 0 0 4px 0; color:#999;">Current ELO</p>
+            <p style="margin: 0; font-size: 24px; color: #60a5fa; font-weight: bold;">${getRank(playerCurrentElo).svg} ${playerCurrentElo}</p>
+          </div>
+          <div style="text-align: center;">
+            <p class="tiny" style="margin: 0 0 4px 0; color:#999;">Best ELO</p>
+            <p style="margin: 0; font-size: 24px; color: #fbbf24; font-weight: bold;">${getRank(best_elo).svg} ${best_elo}</p>
+          </div>
+        </div>
+
+        <div style="border-top: 1px solid #444; padding-top: 16px;">
+          <h2 style="margin:0 0 12px 0;color:#fff;">Settings</h2>
+          <p class="tiny" style="margin:0 0 12px 0;color:#cfcfcf;">Manage your account from here.</p>
+          <div style="display: flex; gap: 10px; margin-bottom: 12px;">
+            <button id="changeUsername" class="btn">Change username</button>
+            <button id="logout" class="btn">Logout</button>
+          </div>
+        </div>
       </div>
     `;
 

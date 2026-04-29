@@ -493,6 +493,57 @@ io.use(async (socket, next) => {
 const rooms = {};
 const rankedQueue = [];
 
+function getDefaultRoomShips() {
+  return [
+    { key: "carrier", label: "Carrier", len: 5 },
+    { key: "battleship", label: "Battleship", len: 4 },
+    { key: "cruiser", label: "Cruiser", len: 3 },
+    { key: "submarine", label: "Submarine", len: 3 },
+    { key: "destroyer", label: "Destroyer", len: 2 },
+  ];
+}
+
+function cloneRoomShips(ships) {
+  return ships.map((ship) => ({
+    key: String(ship.key),
+    label: String(ship.label || ship.key),
+    len: Number(ship.len),
+  }));
+}
+
+function sanitizeRoomSettings(rawSettings = {}, mode = "local") {
+  if (mode === "ranked") {
+    return {
+      boardSize: 10,
+      difficulty: "normal",
+      ships: cloneRoomShips(getDefaultRoomShips()),
+    };
+  }
+
+  const boardSizeValue = Number(rawSettings?.boardSize);
+  const boardSize = [8, 10, 12].includes(boardSizeValue) ? boardSizeValue : 10;
+
+  const difficultyValue = String(rawSettings?.difficulty || "normal").toLowerCase();
+  const difficulty = ["easy", "normal", "hard"].includes(difficultyValue)
+    ? difficultyValue
+    : "normal";
+
+  const incomingShips = Array.isArray(rawSettings?.ships) ? rawSettings.ships : [];
+  const ships = incomingShips
+    .map((ship) => ({
+      key: String(ship?.key || ""),
+      label: String(ship?.label || ship?.key || "Ship"),
+      len: Number(ship?.len),
+    }))
+    .filter((ship) => ship.key && Number.isFinite(ship.len) && ship.len >= 2 && ship.len <= 6);
+
+  return {
+    boardSize,
+    difficulty,
+    ships: cloneRoomShips(ships.length > 0 ? ships : getDefaultRoomShips()),
+  };
+}
+
 function makeRoomCode() {
   const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
   let out = "";
@@ -502,7 +553,7 @@ function makeRoomCode() {
   return out;
 }
 
-function createRoomPlayer(socketId, name, user) {
+function createRoomPlayer(socketId, name, user, boardSize = 10) {
   let finalName = name;
   if (!finalName || finalName === "?" || finalName === "Guest") {
     finalName = "Player";
@@ -517,7 +568,7 @@ function createRoomPlayer(socketId, name, user) {
     userId: user?.id || null,
     userMetadata: user?.user_metadata || {},
     board: null,
-    shotsReceived: Array.from({ length: 10 }, () => Array(10).fill(0)),
+    shotsReceived: Array.from({ length: boardSize }, () => Array(boardSize).fill(0)),
     ready: false,
     stats: {
       hits: 0,
@@ -603,11 +654,13 @@ function tryStartRankedMatches() {
       turn: null,
       state: "waiting",
       mode: "ranked",
+      settings: sanitizeRoomSettings({}, "ranked"),
+      disconnectTimeouts: {},
     };
 
     const room = rooms[roomCode];
-    room.players[firstSocket.id] = createRoomPlayer(firstSocket.id, first.name, first.user);
-    room.players[secondSocket.id] = createRoomPlayer(secondSocket.id, second.name, second.user);
+    room.players[firstSocket.id] = createRoomPlayer(firstSocket.id, first.name, first.user, room.settings.boardSize);
+    room.players[secondSocket.id] = createRoomPlayer(secondSocket.id, second.name, second.user, room.settings.boardSize);
 
     firstSocket.join(roomCode);
     secondSocket.join(roomCode);
@@ -654,7 +707,7 @@ function buildGameSummary(room) {
 }
 
 io.on("connection", (socket) => {
-  console.log(`User connected: ${socket.id}`);
+  console.log(`User connected: ${socket.id} (user: ${socket.data.user?.id})`);
 
   socket.on("ranked_queue_join", () => {
     removeFromRankedQueue(socket.id);
@@ -688,14 +741,27 @@ io.on("connection", (socket) => {
   socket.on("join", (roomCode, playerName, options = {}) => {
     const code = roomCode.toUpperCase();
     const requestedMode = options?.mode === "ranked" ? "ranked" : "local";
+    const requestedSettings = sanitizeRoomSettings(options?.settings, requestedMode);
+    const userId = socket.data.user?.id;
+    let didReconnect = false;
 
     if (!rooms[code]) {
-      rooms[code] = { players: {}, turn: null, state: "waiting", mode: requestedMode };
+      rooms[code] = {
+        players: {},
+        turn: null,
+        state: "waiting",
+        mode: requestedMode,
+        settings: requestedSettings,
+        disconnectTimeouts: {},
+      };
     }
 
     const room = rooms[code];
     if (!room.mode) {
       room.mode = requestedMode;
+    }
+    if (!room.settings) {
+      room.settings = sanitizeRoomSettings({}, room.mode);
     }
 
     if (room.mode !== requestedMode) {
@@ -703,40 +769,105 @@ io.on("connection", (socket) => {
       return;
     }
 
+    // Check if this user is already in the room (reconnection case)
+    let existingPlayerId = null;
+    if (userId) {
+      existingPlayerId = Object.keys(room.players).find(
+        (id) => room.players[id].userId === userId
+      );
+    }
+
     const isAlreadyInRoom = Boolean(room.players[socket.id]);
     const playerCount = Object.keys(room.players).length;
-    if (!isAlreadyInRoom && playerCount >= 2) {
+    
+    if (!isAlreadyInRoom && !existingPlayerId && playerCount >= 2) {
       socket.emit("join_error", { message: "Room is full (2 players max)" });
       return;
     }
 
     socket.join(code);
 
-    // Add player
-    room.players[socket.id] = createRoomPlayer(socket.id, playerName, socket.data.user);
-    const joinedPlayer = room.players[socket.id];
-    hydrateStatsFromUserMetadata(joinedPlayer.name, joinedPlayer.userMetadata);
-    const joinedPlayerStats = getPlayerStats(joinedPlayer.name);
-    const joinedPowerups = joinedPlayerStats.powerups || { sonar: 1, doubleShot: 1 };
+    // Handle reconnection: reuse existing player entry
+    if (existingPlayerId && existingPlayerId !== socket.id) {
+      didReconnect = true;
+      const existingPlayer = room.players[existingPlayerId];
 
-    socket.emit("player_stats", {
-      powerups: {
-        sonar: Number.isFinite(Number(joinedPowerups.sonar)) ? Number(joinedPowerups.sonar) : 1,
-        doubleShot: Number.isFinite(Number(joinedPowerups.doubleShot)) ? Number(joinedPowerups.doubleShot) : 1,
-      },
+      if (!room.disconnectTimeouts) {
+        room.disconnectTimeouts = {};
+      }
+
+      if (room.disconnectTimeouts[existingPlayerId]) {
+        clearTimeout(room.disconnectTimeouts[existingPlayerId]);
+        delete room.disconnectTimeouts[existingPlayerId];
+      }
+
+      if (room.turn === existingPlayerId) {
+        room.turn = socket.id;
+      }
+
+      // Transfer the player to the new socket
+      room.players[socket.id] = existingPlayer;
+      existingPlayer.id = socket.id;
+      delete room.players[existingPlayerId];
+      
+      socket.emit("player_stats", {
+        powerups: {
+          sonar: Number.isFinite(Number(existingPlayer.powerups?.sonar)) ? Number(existingPlayer.powerups.sonar) : 1,
+          doubleShot: Number.isFinite(Number(existingPlayer.powerups?.doubleShot)) ? Number(existingPlayer.powerups.doubleShot) : 1,
+        },
+      });
+      socket.emit("reconnected", { message: "Successfully reconnected to the game!", isReady: existingPlayer.ready });
+
+      const otherPlayerId = Object.keys(room.players).find((id) => id !== socket.id);
+      // Don't notify the other player - they stay completely in the game unaffected
+
+      if (room.state === "playing") {
+        socket.emit("game_start", { turn: room.turn, rejoin: true });
+        io.to(code).emit("turn_change", { turn: room.turn });
+      }
+      
+      console.log(`${playerName} reconnected to ${code}`);
+    } else if (!isAlreadyInRoom) {
+      // Add new player
+      room.players[socket.id] = createRoomPlayer(
+        socket.id,
+        playerName,
+        socket.data.user,
+        room.settings.boardSize,
+      );
+      const joinedPlayer = room.players[socket.id];
+      hydrateStatsFromUserMetadata(joinedPlayer.name, joinedPlayer.userMetadata);
+      const joinedPlayerStats = getPlayerStats(joinedPlayer.name);
+      const joinedPowerups = joinedPlayerStats.powerups || { sonar: 1, doubleShot: 1 };
+
+      socket.emit("player_stats", {
+        powerups: {
+          sonar: Number.isFinite(Number(joinedPowerups.sonar)) ? Number(joinedPowerups.sonar) : 1,
+          doubleShot: Number.isFinite(Number(joinedPowerups.doubleShot)) ? Number(joinedPowerups.doubleShot) : 1,
+        },
+      });
+      
+      console.log(`${playerName} joined ${code}`);
+    }
+
+    socket.emit("join_success", {
+      roomCode: code,
+      reconnected: didReconnect,
+      state: room.state,
+      turn: room.turn,
+      settings: room.settings,
     });
 
     // Notify everyone in room
     io.to(code).emit("room_update", {
       mode: room.mode,
+      settings: room.settings,
       players: Object.values(room.players).map((p) => ({
         id: p.id,
         name: p.name,
         ready: p.ready,
       })),
     });
-
-    console.log(`${playerName} joined ${code}`);
   });
 
   // 2. Place Ships (Ready)
@@ -744,6 +875,13 @@ io.on("connection", (socket) => {
     const code = roomCode.toUpperCase();
     const room = rooms[code];
     if (!room) return;
+    const roomBoardSize = room.settings?.boardSize || 10;
+
+    if (!Array.isArray(grid) || grid.length !== roomBoardSize) return;
+    if (grid.some((row) => !Array.isArray(row) || row.length !== roomBoardSize)) return;
+
+    // Prevent ship re-placement from mutating an active game after refresh/rejoin.
+    if (room.state === "playing") return;
 
     if (room.players[socket.id]) {
       room.players[socket.id].board = grid; // Store the secret board
@@ -752,8 +890,8 @@ io.on("connection", (socket) => {
       room.players[socket.id].ready = true;
 
       // reset per-game stats on (re)ready
-      room.players[socket.id].shotsReceived = Array.from({ length: 10 }, () =>
-        Array(10).fill(0),
+      room.players[socket.id].shotsReceived = Array.from({ length: roomBoardSize }, () =>
+        Array(roomBoardSize).fill(0),
       );
       room.players[socket.id].stats = {
         hits: 0,
@@ -787,6 +925,7 @@ io.on("connection", (socket) => {
       // Update ready status
       io.to(code).emit("room_update", {
         mode: room.mode,
+        settings: room.settings,
         players: Object.values(room.players).map((p) => ({
           id: p.id,
           name: p.name,
@@ -916,6 +1055,7 @@ io.on("connection", (socket) => {
     const code = roomCode.toUpperCase();
     const room = rooms[code];
     if (!room || room.state !== "playing" || room.turn !== socket.id) return;
+    const roomBoardSize = room.settings?.boardSize || 10;
 
     const pIds = Object.keys(room.players);
     const opponentId = pIds.find((id) => id !== socket.id);
@@ -935,7 +1075,7 @@ io.on("connection", (socket) => {
       for (let dc = -1; dc <= 1; dc++) {
         const nr = r + dr;
         const nc = c + dc;
-        if (nr >= 0 && nr < 10 && nc >= 0 && nc < 10) {
+        if (nr >= 0 && nr < roomBoardSize && nc >= 0 && nc < roomBoardSize) {
           if (opponent.board[nr][nc] === 1) {
             foundCells.push({ r: nr, c: nc });
           }
@@ -979,8 +1119,13 @@ io.on("connection", (socket) => {
 
     if (!winner) return;
 
-    if (room.disconnectTimeout) {
-      clearTimeout(room.disconnectTimeout);
+    if (!room.disconnectTimeouts) {
+      room.disconnectTimeouts = {};
+    }
+
+    if (room.disconnectTimeouts[socket.id]) {
+      clearTimeout(room.disconnectTimeouts[socket.id]);
+      delete room.disconnectTimeouts[socket.id];
     }
 
     const summary = buildGameSummary(room);
@@ -1017,8 +1162,14 @@ io.on("connection", (socket) => {
             io.to(opponentId).emit("opponent_disconnected", { timeout: 60 });
           }
 
-          room.disconnectTimeout = setTimeout(async () => {
+          if (!room.disconnectTimeouts) {
+            room.disconnectTimeouts = {};
+          }
+
+          room.disconnectTimeouts[socket.id] = setTimeout(async () => {
+            delete room.disconnectTimeouts[socket.id];
             if (room.state !== "playing") return;
+            if (!room.players[socket.id]) return;
             room.state = "ended";
 
             const loser = room.players[socket.id];

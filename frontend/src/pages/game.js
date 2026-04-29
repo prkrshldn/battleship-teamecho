@@ -1,9 +1,80 @@
-import { state } from "../state";
+import { state, setSettings } from "../state";
 import { createBoard } from "../components/board";
 import { socket, connectSocket } from "../socket";
 import { getShipInfo } from "../util/shipGetInfo";
 import { getRank } from "../util/rank";
 import { getCurrentUser } from "../auth";
+
+// Game state persistence helpers
+function saveGameState(roomCode, gameData) {
+  try {
+    sessionStorage.setItem(`game_state_${roomCode}`, JSON.stringify(gameData));
+  } catch (e) {
+    console.warn("Failed to save game state:", e);
+  }
+}
+
+function loadGameState(roomCode) {
+  try {
+    const data = sessionStorage.getItem(`game_state_${roomCode}`);
+    return data ? JSON.parse(data) : null;
+  } catch (e) {
+    console.warn("Failed to load game state:", e);
+    return null;
+  }
+}
+
+function clearGameState(roomCode) {
+  try {
+    sessionStorage.removeItem(`game_state_${roomCode}`);
+  } catch (e) {
+    console.warn("Failed to clear game state:", e);
+  }
+}
+
+function normalizeRoomSettings(raw) {
+  if (!raw || typeof raw !== "object") return null;
+
+  const boardSizeValue = Number(raw.boardSize);
+  const boardSize = [8, 10, 12].includes(boardSizeValue) ? boardSizeValue : 10;
+  const difficultyValue = String(raw.difficulty || "normal").toLowerCase();
+  const difficulty = ["easy", "normal", "hard"].includes(difficultyValue)
+    ? difficultyValue
+    : "normal";
+
+  const ships = Array.isArray(raw.ships)
+    ? raw.ships
+      .map((ship) => ({
+        key: String(ship?.key || ""),
+        label: String(ship?.label || ship?.key || "Ship"),
+        len: Number(ship?.len),
+      }))
+      .filter((ship) => ship.key && Number.isFinite(ship.len) && ship.len >= 2 && ship.len <= 6)
+    : [];
+
+  return {
+    boardSize,
+    difficulty,
+    ships,
+  };
+}
+
+function roomSettingsEqual(left, right) {
+  const a = normalizeRoomSettings(left);
+  const b = normalizeRoomSettings(right);
+  if (!a || !b) return false;
+  if (a.boardSize !== b.boardSize || a.difficulty !== b.difficulty) return false;
+  if (a.ships.length !== b.ships.length) return false;
+
+  return a.ships.every((ship, idx) => {
+    const other = b.ships[idx];
+    return (
+      ship.key === other.key
+      && ship.label === other.label
+      && ship.len === other.len
+    );
+  });
+}
 
 export function renderGame(root, { roomId }) {
   const el = document.createElement("div");
@@ -71,6 +142,7 @@ export function renderGame(root, { roomId }) {
 
         <h2>Status</h2>
         <p id="status" class="mono">Connecting…</p>
+        <button class="btn ghost" id="rejoinGame" style="display:none; margin-top:8px;">Rejoin Game</button>
         
         <div class="hr"></div>
         <p class="tiny muted" id="debug"></p>
@@ -192,6 +264,7 @@ export function renderGame(root, { roomId }) {
 
   const shipSelect = el.querySelector("#ship");
   const status = el.querySelector("#status");
+  const rejoinBtn = el.querySelector("#rejoinGame");
   const debug = el.querySelector("#debug");
   const setupHeading = el.querySelector("#setup-heading");
   const setupPanel = el.querySelector("#setup-controls");
@@ -237,6 +310,67 @@ export function renderGame(root, { roomId }) {
     clearInterval(timerInterval);
     timerDisplay.textContent = "--";
     timerDisplay.style.color = "#666";
+  }
+
+  function getSunkShipsFromUI() {
+    const sunkShips = [];
+    el.querySelectorAll("#enemy-fleet .ship-item.sunk").forEach((shipEl) => {
+      sunkShips.push(shipEl.id.replace("enemy-ship-", ""));
+    });
+    return sunkShips;
+  }
+
+  function persistGameState() {
+    saveGameState(code, {
+      myGrid: my.grid,
+      oppGrid: opp.grid,
+      myShips: my.getShips(),
+      oppShips: opp.getShips(),
+      myHits,
+      myMisses,
+      myShipsSunk,
+      sonarCount,
+      doubleShotCount,
+      sunkShips: getSunkShipsFromUI(),
+      isMyTurn,
+      gameActive,
+    });
+  }
+
+  function restoreGameState(savedState) {
+    if (!savedState) return;
+
+    if (Array.isArray(savedState.myShips)) {
+      my.setShips(savedState.myShips);
+    }
+    if (Array.isArray(savedState.oppShips)) {
+      opp.setShips(savedState.oppShips);
+    }
+
+    if (Array.isArray(savedState.myGrid)) {
+      my.setGrid(savedState.myGrid);
+    }
+    if (Array.isArray(savedState.oppGrid)) {
+      opp.setGrid(savedState.oppGrid);
+    }
+
+    myHits = Number(savedState.myHits) || 0;
+    myMisses = Number(savedState.myMisses) || 0;
+    myShipsSunk = Number(savedState.myShipsSunk) || 0;
+    sonarCount = Number(savedState.sonarCount) || 0;
+    doubleShotCount = Number(savedState.doubleShotCount) || 0;
+
+    hitCountEl.textContent = myHits;
+    missCountEl.textContent = myMisses;
+    countSonar.textContent = sonarCount;
+    countDoubleShot.textContent = doubleShotCount;
+
+    if (Array.isArray(savedState.sunkShips)) {
+      savedState.sunkShips.forEach((shipId) => {
+        const shipEl = el.querySelector(`#enemy-ship-${shipId}`);
+        if (shipEl) shipEl.classList.add("sunk");
+      });
+    }
   }
 
   // --- Helper Functions ---
@@ -306,23 +440,117 @@ export function renderGame(root, { roomId }) {
   }
 
   // --- Socket Logic ---
+  let hasJoined = false;
+  let joinRetryTimer = null;
+  let suppressUnloadRejoin = false;
+  const rejoinStorageKey = `battleship:pending-rejoin:${code}`;
+  let requiresManualRejoin = !isCpuMode && sessionStorage.getItem(rejoinStorageKey) === "1";
+
+  const attemptJoin = () => {
+    if (isCpuMode || hasJoined || requiresManualRejoin) return;
+    socket.emit("join", code, state.playerName, {
+      mode: matchMode,
+      settings: {
+        boardSize: state.settings?.boardSize,
+        difficulty: state.settings?.difficulty,
+        ships: state.settings?.ships,
+      },
+    });
+    console.log(`${state.playerName} joining ${matchMode} room: ${code}`);
+  };
+
   const onConnect = () => {
-    if (!isCpuMode) {
-      socket.emit("join", code, state.playerName, { mode: matchMode });
-      console.log(`${state.playerName} joining ${matchMode} room: ${code}`);
+    if (requiresManualRejoin) {
+      hasJoined = false;
+      updateStatus("You were disconnected by refresh. Click Rejoin Game.");
+      rejoinBtn.style.display = "inline-block";
+      return;
+    }
+    attemptJoin();
+  };
+
+  const onConnectError = (err) => {
+    const message = err?.message || "Unable to connect to game server.";
+    if (message.toLowerCase().includes("unauthorized")) {
+      updateStatus("Session expired. Please log in again.");
+      window.location.hash = "#/";
+      return;
+    }
+
+    updateStatus("Connection issue. Click Rejoin Game to retry.");
+    rejoinBtn.style.display = "inline-block";
+  };
+
+  const onDisconnect = () => {
+    if (isCpuMode) return;
+    hasJoined = false;
+    updateStatus("Disconnected from game. Click Rejoin Game.");
+    rejoinBtn.style.display = "inline-block";
+  };
+
+  const onReconnected = (data) => {
+    updateStatus("Reconnected to the game!");
+    hasJoined = true;
+    requiresManualRejoin = false;
+    sessionStorage.removeItem(rejoinStorageKey);
+    if (joinRetryTimer) {
+      clearTimeout(joinRetryTimer);
+      joinRetryTimer = null;
+    }
+    rejoinBtn.style.display = "none";
+    // If the game already started, we stay in the current state
+    if (data.isReady) {
+      setAllPlacedUI();
     }
   };
 
-  const onConnectError = () => {
-    updateStatus("Session expired. Please log in again.");
-    window.location.hash = "#/";
+  const onJoinSuccess = (data) => {
+    const roomSettings = normalizeRoomSettings(data?.settings);
+    if (!isCpuMode && roomSettings && !roomSettingsEqual(state.settings, roomSettings)) {
+      setSettings(roomSettings);
+      suppressUnloadRejoin = true;
+      hasJoined = false;
+      requiresManualRejoin = false;
+      sessionStorage.removeItem(rejoinStorageKey);
+      updateStatus("Syncing room settings...");
+      window.location.reload();
+      return;
+    }
+
+    hasJoined = true;
+    requiresManualRejoin = false;
+    sessionStorage.removeItem(rejoinStorageKey);
+    if (joinRetryTimer) {
+      clearTimeout(joinRetryTimer);
+      joinRetryTimer = null;
+    }
+    rejoinBtn.style.display = "none";
   };
 
   socket.on("connect", onConnect);
   socket.on("connect_error", onConnectError);
+  socket.on("disconnect", onDisconnect);
+  socket.on("reconnected", onReconnected);
+  socket.on("join_success", onJoinSuccess);
 
   const onJoinError = (data) => {
-    updateStatus(data?.message || "Failed to join this room.");
+    const message = data?.message || "Failed to join this room.";
+    hasJoined = false;
+    updateStatus(`${message} Click Rejoin Game.`);
+    rejoinBtn.style.display = "inline-block";
+
+    const lower = message.toLowerCase();
+    if (lower.includes("room is full") || lower.includes("full")) {
+      if (joinRetryTimer) {
+        clearTimeout(joinRetryTimer);
+      }
+      joinRetryTimer = setTimeout(() => {
+        joinRetryTimer = null;
+        if (!hasJoined && socket.connected) {
+          attemptJoin();
+        }
+      }, 800);
+    }
   };
 
   socket.on("join_error", onJoinError);
@@ -345,6 +573,8 @@ export function renderGame(root, { roomId }) {
       opp.markSonar(cell.r, cell.c);
     });
     startTimer();
+
+    persistGameState();
   });
 
   socket.on("double_shot_activated", (data) => {
@@ -352,6 +582,8 @@ export function renderGame(root, { roomId }) {
     doubleShotCount = data.remaining;
     countDoubleShot.textContent = doubleShotCount;
     document.body.classList.add("double-shot-active");
+
+    persistGameState();
   });
 
   socket.on("bonus_turn", (data) => {
@@ -359,9 +591,23 @@ export function renderGame(root, { roomId }) {
     updateStatus(data.message);
     isMyTurn = true;
     startTimer();
+
+    persistGameState();
   });
 
   socket.on("room_update", (data) => {
+    const iAmInRoom = Array.isArray(data?.players)
+      ? data.players.some((p) => p.id === socket.id)
+      : false;
+    if (iAmInRoom) {
+      hasJoined = true;
+      rejoinBtn.style.display = "none";
+      if (joinRetryTimer) {
+        clearTimeout(joinRetryTimer);
+        joinRetryTimer = null;
+      }
+    }
+
     // data.players = [{name, ready}, ...]
     const count = data.players.length;
     const readyCount = data.players.filter((p) => p.ready).length;
@@ -380,11 +626,20 @@ export function renderGame(root, { roomId }) {
     updateStatus("Place your ships, then click Ready.");
     debug.textContent = "CPU opponent selected.";
   } else {
-    if (socket.connected) {
+    if (requiresManualRejoin) {
+      hasJoined = false;
+      updateStatus("You were disconnected by refresh. Click Rejoin Game.");
+      rejoinBtn.style.display = "inline-block";
+      if (!socket.connected) {
+        connectSocket().catch((err) => {
+          onConnectError(err);
+        });
+      }
+    } else if (socket.connected) {
       onConnect();
     } else {
-      connectSocket().catch(() => {
-        onConnectError();
+      connectSocket().catch((err) => {
+        onConnectError(err);
       });
     }
   }
@@ -403,6 +658,13 @@ export function renderGame(root, { roomId }) {
   renderEnemyFleet();
 
   socket.on("game_start", (data) => {
+    hasJoined = true;
+    rejoinBtn.style.display = "none";
+    if (joinRetryTimer) {
+      clearTimeout(joinRetryTimer);
+      joinRetryTimer = null;
+    }
+
     gameActive = true;
     setupHeading.style.display = "none";
     setupPanel.style.display = "none"; // Hide setup controls
@@ -422,6 +684,12 @@ export function renderGame(root, { roomId }) {
     if (isMyTurn) startTimer();
     else stopTimer();
 
+    if (data?.rejoin) {
+      restoreGameState(loadGameState(code));
+    }
+
+    persistGameState();
+
     // Switch boards to game mode visual if needed
   });
 
@@ -432,6 +700,8 @@ export function renderGame(root, { roomId }) {
     
     if (isMyTurn) startTimer();
     else stopTimer();
+
+    persistGameState();
   });
 
   socket.on("shot_result", (data) => {
@@ -498,12 +768,19 @@ export function renderGame(root, { roomId }) {
         my.markSunk(data.sunk);
       }
     }
+
+    persistGameState();
   });
 
   socket.on("game_over", (data) => {
     gameActive = false;
     isMyTurn = false;
+    requiresManualRejoin = false;
+    sessionStorage.removeItem(rejoinStorageKey);
     stopTimer();
+
+  // Clear saved game state
+  clearGameState(code);
 
     const iWon = data.winnerId === socket.id;
     const isForfeit = data.forfeit;
@@ -604,16 +881,49 @@ export function renderGame(root, { roomId }) {
     updateStatus(`Opponent disconnected! They have ${data.timeout}s to reconnect or they forfeit...`);
   });
 
+  rejoinBtn.addEventListener("click", () => {
+    if (isCpuMode) return;
+    hasJoined = false;
+    requiresManualRejoin = false;
+    if (socket.connected) {
+      attemptJoin();
+      return;
+    }
+
+    connectSocket()
+      .then(() => {
+        attemptJoin();
+      })
+      .catch((err) => {
+        onConnectError(err);
+      });
+  });
+
   // --- Event Listeners ---
+
+  const onBeforeUnload = () => {
+    if (isCpuMode) return;
+    if (suppressUnloadRejoin) return;
+    if (gameActive || hasJoined) {
+      persistGameState();
+      sessionStorage.setItem(rejoinStorageKey, "1");
+    }
+  };
+
+  window.addEventListener("beforeunload", onBeforeUnload);
 
   const leaveBtn = el.querySelector(".topbar a.btn");
   leaveBtn.addEventListener("click", (e) => {
+    if (!isCpuMode) {
+      sessionStorage.removeItem(rejoinStorageKey);
+    }
+
     if (gameActive && !isCpuMode) {
       if (!confirm("Leaving now will forfeit the game. Are you sure?")) {
         e.preventDefault();
-      } else {
-        socket.emit("forfeit", { roomCode: code });
+        return;
       }
+      socket.emit("forfeit", { roomCode: code });
     }
   });
 
@@ -943,6 +1253,41 @@ export function renderGame(root, { roomId }) {
     debug.textContent = "CPU placed ships and is ready.";
     updateStatus("Game Started! YOUR TURN. Fire!");
     startTimer();
+
+      // Restore game state if player refreshed during gameplay
+      const savedState = loadGameState(code);
+      if (savedState) {
+        // Restore my board and opponent board shots
+        if (savedState.myGrid) {
+          my.grid = savedState.myGrid;
+          my.render();
+        }
+        if (savedState.oppGrid) {
+          opp.grid = savedState.oppGrid;
+          opp.render();
+        }
+        // Restore stats
+        myHits = savedState.myHits || 0;
+        myMisses = savedState.myMisses || 0;
+        myShipsSunk = savedState.myShipsSunk || 0;
+        hitCountEl.textContent = myHits;
+        missCountEl.textContent = myMisses;
+        // Restore powerups
+        sonarCount = savedState.sonarCount || 0;
+        doubleShotCount = savedState.doubleShotCount || 0;
+        countSonar.textContent = sonarCount;
+        countDoubleShot.textContent = doubleShotCount;
+        // Mark sunk ships
+        if (savedState.sunkShips) {
+          savedState.sunkShips.forEach(shipKey => {
+            const shipEl = el.querySelector(`#enemy-ship-${shipKey}`);
+            if (shipEl) {
+              shipEl.classList.add("sunk");
+            }
+          });
+        }
+        clearGameState(code);
+      }
   }
 
   function fireAtCpu(r, c) {
@@ -1015,6 +1360,17 @@ export function renderGame(root, { roomId }) {
       socket.off("join_error", onJoinError);
       socket.off("connect", onConnect);
       socket.off("connect_error", onConnectError);
+      socket.off("disconnect", onDisconnect);
+      socket.off("reconnected", onReconnected);
+      socket.off("join_success", onJoinSuccess);
+      socket.off("sonar_result");
+      socket.off("double_shot_activated");
+      socket.off("bonus_turn");
+      window.removeEventListener("beforeunload", onBeforeUnload);
+      if (joinRetryTimer) {
+        clearTimeout(joinRetryTimer);
+        joinRetryTimer = null;
+      }
       clearInterval(timerInterval);
     },
     { once: true },
