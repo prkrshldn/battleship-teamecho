@@ -80,6 +80,37 @@ app.use(
 );
 app.use(express.json());
 
+// Track unique authenticated users currently connected to the site.
+const onlineUsers = new Map();
+
+function getOnlineUsersCount() {
+  return onlineUsers.size;
+}
+
+function emitOnlineUsersCount() {
+  io.emit("online_users_update", { count: getOnlineUsersCount() });
+}
+
+function registerOnlineUser(userId) {
+  if (!userId) return;
+
+  onlineUsers.set(userId, (onlineUsers.get(userId) || 0) + 1);
+  emitOnlineUsersCount();
+}
+
+function unregisterOnlineUser(userId) {
+  if (!userId || !onlineUsers.has(userId)) return;
+
+  const nextCount = (onlineUsers.get(userId) || 0) - 1;
+  if (nextCount > 0) {
+    onlineUsers.set(userId, nextCount);
+  } else {
+    onlineUsers.delete(userId);
+  }
+
+  emitOnlineUsersCount();
+}
+
 // --- ELO Stats Storage ---
 const statsFile = path.join(__dirname, "stats.json");
 let playerStats = {};
@@ -486,7 +517,8 @@ io.use(async (socket, next) => {
 
 // --- Game State ---
 // rooms[code] = {
-//   players: { [socketId]: { id, name, board, ships, ready } },
+//   players: { [socketId]: { id, name, board, ships, ready, role } },
+//   spectators: { [socketId]: { id, name, role } },
 //   turn: socketId,
 //   state: 'waiting' | 'playing' | 'ended'
 // }
@@ -508,6 +540,19 @@ function cloneRoomShips(ships) {
     key: String(ship.key),
     label: String(ship.label || ship.key),
     len: Number(ship.len),
+  }));
+}
+
+function cloneGrid(grid) {
+  if (!Array.isArray(grid)) return null;
+  return grid.map((row) => (Array.isArray(row) ? row.slice() : row));
+}
+
+function cloneShipPlacements(ships) {
+  if (!Array.isArray(ships)) return [];
+  return ships.map((ship) => ({
+    ...ship,
+    coords: Array.isArray(ship.coords) ? ship.coords.map((coord) => ({ ...coord })) : [],
   }));
 }
 
@@ -553,7 +598,7 @@ function makeRoomCode() {
   return out;
 }
 
-function createRoomPlayer(socketId, name, user, boardSize = 10) {
+function createRoomPlayer(socketId, name, user, boardSize = 10, role = "left") {
   let finalName = name;
   if (!finalName || finalName === "?" || finalName === "Guest") {
     finalName = "Player";
@@ -567,9 +612,11 @@ function createRoomPlayer(socketId, name, user, boardSize = 10) {
     name: finalName,
     userId: user?.id || null,
     userMetadata: user?.user_metadata || {},
+    role,
     board: null,
     shotsReceived: Array.from({ length: boardSize }, () => Array(boardSize).fill(0)),
     ready: false,
+    doubleShotActive: false,
     stats: {
       hits: 0,
       misses: 0,
@@ -577,6 +624,179 @@ function createRoomPlayer(socketId, name, user, boardSize = 10) {
       sunkShips: [],
     },
   };
+}
+
+function createRoomSpectator(socketId, name, user) {
+  let finalName = name;
+  if (!finalName || finalName === "?" || finalName === "Guest") {
+    finalName = "Spectator";
+  }
+
+  return {
+    id: socketId,
+    name: finalName,
+    userId: user?.id || null,
+    userMetadata: user?.user_metadata || {},
+    role: "middle",
+    ready: false,
+  };
+}
+
+function getAutoLocalJoinRole(room) {
+  const activePlayers = Object.values(room.players || {});
+
+  if (activePlayers.length === 0) return "left";
+  if (activePlayers.length === 1) return "right";
+  return "middle";
+}
+
+function getRoomParticipantCount(room) {
+  return Object.keys(room.players || {}).length + Object.keys(room.spectators || {}).length;
+}
+
+function buildRoomParticipants(room) {
+  const players = Object.values(room.players || {}).map((p) => ({
+    id: p.id,
+    name: p.name,
+    ready: Boolean(p.ready),
+    role: p.role || "left",
+    type: "player",
+  }));
+
+  const spectators = Object.values(room.spectators || {}).map((p) => ({
+    id: p.id,
+    name: p.name,
+    ready: false,
+    role: "middle",
+    type: "spectator",
+  }));
+
+  return { players, spectators, participants: [...players, ...spectators] };
+}
+
+function buildBoardState(player) {
+  const board = cloneGrid(player.board);
+  const shotsReceived = cloneGrid(player.shotsReceived);
+  const ships = cloneShipPlacements(player.ships);
+
+  if (!board) return null;
+
+  const display = cloneGrid(board) || [];
+  if (Array.isArray(shotsReceived)) {
+    for (let r = 0; r < display.length; r++) {
+      for (let c = 0; c < display[r].length; c++) {
+        if (shotsReceived[r] && Number.isFinite(shotsReceived[r][c]) && shotsReceived[r][c] !== 0) {
+          display[r][c] = shotsReceived[r][c];
+        }
+      }
+    }
+  }
+
+  for (const ship of ships) {
+    if ((ship.hits || 0) >= ship.len && Array.isArray(ship.coords)) {
+      for (const coord of ship.coords) {
+        if (display[coord.r] && Number.isFinite(display[coord.r][coord.c])) {
+          display[coord.r][coord.c] = 4;
+        }
+      }
+    }
+  }
+
+  return display;
+}
+
+function buildRoomSnapshot(room) {
+  const players = Object.values(room.players || {}).map((player) => ({
+    id: player.id,
+    name: player.name,
+    ready: Boolean(player.ready),
+    role: player.role || "left",
+    board: cloneGrid(player.board),
+    shotsReceived: cloneGrid(player.shotsReceived),
+    ships: cloneShipPlacements(player.ships),
+    stats: {
+      hits: player.stats?.hits ?? 0,
+      misses: player.stats?.misses ?? 0,
+      shipsSunk: player.stats?.shipsSunk ?? 0,
+      sunkShips: Array.isArray(player.stats?.sunkShips) ? [...player.stats.sunkShips] : [],
+    },
+  }));
+
+  const spectators = Object.values(room.spectators || {}).map((spectator) => ({
+    id: spectator.id,
+    name: spectator.name,
+    role: "middle",
+    ready: false,
+  }));
+
+  return {
+    state: room.state,
+    mode: room.mode,
+    turn: room.turn,
+    settings: room.settings,
+    players,
+    spectators,
+    boardStates: players.map((player) => ({
+      id: player.id,
+      role: player.role,
+      name: player.name,
+      board: buildBoardState(room.players[player.id]),
+    })),
+    summary: room.state === "ended" ? buildGameSummary(room) : null,
+  };
+}
+
+function moveParticipantToRole(room, socketId, targetRole) {
+  const normalizedRole = ["left", "right", "middle"].includes(targetRole) ? targetRole : "left";
+  const existingPlayer = room.players[socketId] || null;
+  const existingSpectator = room.spectators[socketId] || null;
+  const current = existingPlayer || existingSpectator;
+  if (!current) {
+    return { ok: false, message: "You are not in this room." };
+  }
+
+  if (normalizedRole === "middle") {
+    if (existingSpectator) {
+      return { ok: true, role: "middle" };
+    }
+
+    delete room.players[socketId];
+    room.spectators[socketId] = {
+      id: existingPlayer.id,
+      name: existingPlayer.name,
+      userId: existingPlayer.userId || null,
+      userMetadata: existingPlayer.userMetadata || {},
+      role: "middle",
+      ready: false,
+    };
+    return { ok: true, role: "middle" };
+  }
+
+  const occupied = Object.values(room.players).find(
+    (player) => player.id !== socketId && player.role === normalizedRole,
+  );
+  if (occupied) {
+    return { ok: false, message: `${normalizedRole === "left" ? "Left" : "Right"} side is already taken` };
+  }
+
+  if (existingPlayer) {
+    existingPlayer.role = normalizedRole;
+    return { ok: true, role: normalizedRole };
+  }
+
+  delete room.spectators[socketId];
+  room.players[socketId] = createRoomPlayer(
+    socketId,
+    existingSpectator.name,
+    {
+      id: existingSpectator.userId,
+      user_metadata: existingSpectator.userMetadata || {},
+    },
+    room.settings?.boardSize || 10,
+    normalizedRole,
+  );
+
+  return { ok: true, role: normalizedRole };
 }
 
 function getRankedNameFromUser(user) {
@@ -651,6 +871,7 @@ function tryStartRankedMatches() {
 
     rooms[roomCode] = {
       players: {},
+      spectators: {},
       turn: null,
       state: "waiting",
       mode: "ranked",
@@ -697,6 +918,7 @@ function buildGameSummary(room) {
     summary[p.id] = {
       id: p.id,
       name: p.name,
+      role: p.role || "left",
       hits: p.stats?.hits ?? 0,
       misses: p.stats?.misses ?? 0,
       shipsSunk: p.stats?.shipsSunk ?? 0,
@@ -708,6 +930,12 @@ function buildGameSummary(room) {
 
 io.on("connection", (socket) => {
   console.log(`User connected: ${socket.id} (user: ${socket.data.user?.id})`);
+
+  registerOnlineUser(socket.data.user?.id);
+
+  socket.on("online_users_request", () => {
+    socket.emit("online_users_update", { count: getOnlineUsersCount() });
+  });
 
   socket.on("ranked_queue_join", () => {
     removeFromRankedQueue(socket.id);
@@ -742,12 +970,16 @@ io.on("connection", (socket) => {
     const code = roomCode.toUpperCase();
     const requestedMode = options?.mode === "ranked" ? "ranked" : "local";
     const requestedSettings = sanitizeRoomSettings(options?.settings, requestedMode);
+    const requestedRole = ["left", "right", "middle"].includes(String(options?.role || "left").toLowerCase())
+      ? String(options?.role || "left").toLowerCase()
+      : "left";
     const userId = socket.data.user?.id;
     let didReconnect = false;
 
     if (!rooms[code]) {
       rooms[code] = {
         players: {},
+        spectators: {},
         turn: null,
         state: "waiting",
         mode: requestedMode,
@@ -764,6 +996,12 @@ io.on("connection", (socket) => {
       room.settings = sanitizeRoomSettings({}, room.mode);
     }
 
+    if (!room.spectators) {
+      room.spectators = {};
+    }
+
+    const autoJoinRole = room.mode === "local" ? getAutoLocalJoinRole(room) : requestedRole;
+
     if (room.mode !== requestedMode) {
       socket.emit("join_error", { message: `Room is ${room.mode} mode` });
       return;
@@ -777,11 +1015,21 @@ io.on("connection", (socket) => {
       );
     }
 
+    let existingSpectatorId = null;
+    if (userId) {
+      existingSpectatorId = Object.keys(room.spectators).find(
+        (id) => room.spectators[id].userId === userId
+      );
+    }
+
+    const existingParticipantId = existingPlayerId || existingSpectatorId;
+
     const isAlreadyInRoom = Boolean(room.players[socket.id]);
-    const playerCount = Object.keys(room.players).length;
-    
-    if (!isAlreadyInRoom && !existingPlayerId && playerCount >= 2) {
-      socket.emit("join_error", { message: "Room is full (2 players max)" });
+    const totalParticipants = getRoomParticipantCount(room);
+    const maxParticipants = room.mode === "local" ? 4 : 2;
+
+    if (!isAlreadyInRoom && !existingParticipantId && totalParticipants >= maxParticipants) {
+      socket.emit("join_error", { message: `Room is full (${maxParticipants} users max)` });
       return;
     }
 
@@ -827,27 +1075,49 @@ io.on("connection", (socket) => {
       }
       
       console.log(`${playerName} reconnected to ${code}`);
-    } else if (!isAlreadyInRoom) {
-      // Add new player
-      room.players[socket.id] = createRoomPlayer(
-        socket.id,
-        playerName,
-        socket.data.user,
-        room.settings.boardSize,
-      );
-      const joinedPlayer = room.players[socket.id];
-      hydrateStatsFromUserMetadata(joinedPlayer.name, joinedPlayer.userMetadata);
-      const joinedPlayerStats = getPlayerStats(joinedPlayer.name);
-      const joinedPowerups = joinedPlayerStats.powerups || { sonar: 1, doubleShot: 1 };
+    } else if (existingSpectatorId && existingSpectatorId !== socket.id) {
+      didReconnect = true;
+      const existingSpectator = room.spectators[existingSpectatorId];
 
-      socket.emit("player_stats", {
-        powerups: {
-          sonar: Number.isFinite(Number(joinedPowerups.sonar)) ? Number(joinedPowerups.sonar) : 1,
-          doubleShot: Number.isFinite(Number(joinedPowerups.doubleShot)) ? Number(joinedPowerups.doubleShot) : 1,
-        },
-      });
-      
-      console.log(`${playerName} joined ${code}`);
+      room.spectators[socket.id] = existingSpectator;
+      existingSpectator.id = socket.id;
+      delete room.spectators[existingSpectatorId];
+
+      console.log(`${playerName} reconnected to ${code} as spectator`);
+    } else if (!isAlreadyInRoom) {
+      const joinRole = room.mode === "local" ? autoJoinRole : requestedRole;
+
+      if (room.mode === "local" && joinRole === "middle") {
+        room.spectators[socket.id] = createRoomSpectator(socket.id, playerName, socket.data.user);
+        console.log(`${playerName} joined ${code} as spectator`);
+      } else {
+        const occupiedPlayer = Object.values(room.players).find((player) => player.role === joinRole);
+        if (occupiedPlayer) {
+          socket.emit("join_error", { message: `${joinRole === "left" ? "Left" : "Right"} side is already taken` });
+          return;
+        }
+
+        room.players[socket.id] = createRoomPlayer(
+          socket.id,
+          playerName,
+          socket.data.user,
+          room.settings.boardSize,
+          joinRole,
+        );
+        const joinedPlayer = room.players[socket.id];
+        hydrateStatsFromUserMetadata(joinedPlayer.name, joinedPlayer.userMetadata);
+        const joinedPlayerStats = getPlayerStats(joinedPlayer.name);
+        const joinedPowerups = joinedPlayerStats.powerups || { sonar: 1, doubleShot: 1 };
+
+        socket.emit("player_stats", {
+          powerups: {
+            sonar: Number.isFinite(Number(joinedPowerups.sonar)) ? Number(joinedPowerups.sonar) : 1,
+            doubleShot: Number.isFinite(Number(joinedPowerups.doubleShot)) ? Number(joinedPowerups.doubleShot) : 1,
+          },
+        });
+        
+        console.log(`${playerName} joined ${code} on ${joinRole} side`);
+      }
     }
 
     socket.emit("join_success", {
@@ -856,17 +1126,59 @@ io.on("connection", (socket) => {
       state: room.state,
       turn: room.turn,
       settings: room.settings,
+      role: room.players[socket.id]?.role || room.spectators[socket.id]?.role || autoJoinRole,
+      snapshot: buildRoomSnapshot(room),
     });
 
     // Notify everyone in room
     io.to(code).emit("room_update", {
       mode: room.mode,
       settings: room.settings,
-      players: Object.values(room.players).map((p) => ({
-        id: p.id,
-        name: p.name,
-        ready: p.ready,
-      })),
+      state: room.state,
+      turn: room.turn,
+      ...buildRoomParticipants(room),
+      snapshot: buildRoomSnapshot(room),
+    });
+  });
+
+  socket.on("set_role", ({ roomCode, role }) => {
+    const code = String(roomCode || "").toUpperCase();
+    const room = rooms[code];
+    if (!room) {
+      socket.emit("role_change_error", { message: "Room not found." });
+      return;
+    }
+
+    if (room.mode !== "local") {
+      socket.emit("role_change_error", { message: "Role changes are only available in local matches." });
+      return;
+    }
+
+    if (room.state === "playing") {
+      socket.emit("role_change_error", { message: "Cannot change role after the match has started." });
+      return;
+    }
+
+    if (!room.players[socket.id] && !room.spectators?.[socket.id]) {
+      socket.emit("role_change_error", { message: "Join the room first." });
+      return;
+    }
+
+    const result = moveParticipantToRole(room, socket.id, String(role || "left").toLowerCase());
+    if (!result.ok) {
+      socket.emit("role_change_error", { message: result.message || "Unable to change role." });
+      return;
+    }
+
+    socket.emit("role_changed", { role: result.role });
+
+    io.to(code).emit("room_update", {
+      mode: room.mode,
+      settings: room.settings,
+      state: room.state,
+      turn: room.turn,
+      ...buildRoomParticipants(room),
+      snapshot: buildRoomSnapshot(room),
     });
   });
 
@@ -905,7 +1217,8 @@ io.on("connection", (socket) => {
     const pIds = Object.keys(room.players);
     if (pIds.length === 2 && pIds.every((id) => room.players[id].ready)) {
       room.state = "playing";
-      room.turn = pIds[0]; // First player starts
+      const leftPlayer = Object.values(room.players).find((player) => player.role === "left");
+      room.turn = leftPlayer?.id || pIds[0]; // Left player starts when present
 
       for (const id of pIds) {
         const player = room.players[id];
@@ -919,18 +1232,17 @@ io.on("connection", (socket) => {
         });
       }
 
-      io.to(code).emit("game_start", { turn: room.turn });
+      io.to(code).emit("game_start", { turn: room.turn, snapshot: buildRoomSnapshot(room) });
       console.log(`Game started in ${code}`);
     } else {
       // Update ready status
       io.to(code).emit("room_update", {
         mode: room.mode,
         settings: room.settings,
-        players: Object.values(room.players).map((p) => ({
-          id: p.id,
-          name: p.name,
-          ready: p.ready,
-        })),
+        state: room.state,
+        turn: room.turn,
+        ...buildRoomParticipants(room),
+        snapshot: buildRoomSnapshot(room),
       });
     }
   });
@@ -997,6 +1309,7 @@ io.on("connection", (socket) => {
       hit: isHit,
       sunk: sunkShipName,
       sunkCoords: sunkShipCoords,
+      snapshot: buildRoomSnapshot(room),
     });
 
     // Win condition: all opponent ships sunk
@@ -1018,6 +1331,7 @@ io.on("connection", (socket) => {
         mode: room.mode,
         summary,
         eloChanges,
+        snapshot: buildRoomSnapshot(room),
       });
       return;
     }
@@ -1143,17 +1457,37 @@ io.on("connection", (socket) => {
       mode: room.mode,
       summary,
       eloChanges,
+      snapshot: buildRoomSnapshot(room),
       forfeit: true,
     });
   });
 
   socket.on("disconnect", () => {
+    unregisterOnlineUser(socket.data.user?.id);
     removeFromRankedQueue(socket.id);
     console.log(`User disconnected: ${socket.id}`);
 
     // Detect if they were in a game
     for (const [code, room] of Object.entries(rooms)) {
-      if (room.players[socket.id]) {
+      if (room.players[socket.id] || room.spectators?.[socket.id]) {
+        const wasSpectator = Boolean(room.spectators?.[socket.id]);
+        if (wasSpectator) {
+          delete room.spectators[socket.id];
+          if (getRoomParticipantCount(room) === 0) {
+            delete rooms[code];
+          } else {
+            io.to(code).emit("room_update", {
+              mode: room.mode,
+              settings: room.settings,
+              state: room.state,
+              turn: room.turn,
+              ...buildRoomParticipants(room),
+              snapshot: buildRoomSnapshot(room),
+            });
+          }
+          break;
+        }
+
         if (room.state === "playing") {
           const pIds = Object.keys(room.players);
           const opponentId = pIds.find((id) => id !== socket.id);
@@ -1195,12 +1529,19 @@ io.on("connection", (socket) => {
             });
           }, 60000);
         } else if (room.state === "waiting") {
-          const pIds = Object.keys(room.players);
-          const opponentId = pIds.find((id) => id !== socket.id);
-          if (opponentId) {
-            io.to(opponentId).emit("join_error", { message: "Opponent left the room." });
+          delete room.players[socket.id];
+          if (getRoomParticipantCount(room) === 0) {
+            delete rooms[code];
+          } else {
+            io.to(code).emit("room_update", {
+              mode: room.mode,
+              settings: room.settings,
+              state: room.state,
+              turn: room.turn,
+              ...buildRoomParticipants(room),
+              snapshot: buildRoomSnapshot(room),
+            });
           }
-          delete rooms[code];
         }
         break; // found the room
       }
