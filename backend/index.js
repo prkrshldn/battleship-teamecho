@@ -1097,6 +1097,12 @@ io.on("connection", (socket) => {
         io.to(code).emit("turn_change", { turn: room.turn });
       }
       
+      // Notify others that this player reconnected (useful for ranked reconnect flows)
+      const otherId = Object.keys(room.players).find((id) => id !== socket.id);
+      if (otherId) {
+        io.to(otherId).emit("opponent_reconnected", { id: socket.id });
+      }
+
       console.log(`${playerName} reconnected to ${code}`);
     } else if (existingSpectatorId && existingSpectatorId !== socket.id) {
       didReconnect = true;
@@ -1107,6 +1113,11 @@ io.on("connection", (socket) => {
       delete room.spectators[existingSpectatorId];
 
       console.log(`${playerName} reconnected to ${code} as spectator`);
+      // notify players that a spectator rejoined (not critical)
+      const otherId = Object.keys(room.players).find((id) => id !== socket.id);
+      if (otherId) {
+        io.to(otherId).emit("opponent_reconnected", { id: socket.id });
+      }
     } else if (!isAlreadyInRoom) {
       const joinRole = room.mode === "local"
         ? resolveLocalJoinRole(room, autoJoinRole)
@@ -1511,42 +1522,45 @@ io.on("connection", (socket) => {
           const pIds = Object.keys(room.players);
           const opponentId = pIds.find((id) => id !== socket.id);
 
-          if (opponentId) {
-            io.to(opponentId).emit("opponent_disconnected", { timeout: 60 });
-          }
-
-          if (!room.disconnectTimeouts) {
-            room.disconnectTimeouts = {};
-          }
-
-          room.disconnectTimeouts[socket.id] = setTimeout(async () => {
-            delete room.disconnectTimeouts[socket.id];
-            if (room.state !== "playing") return;
-            if (!room.players[socket.id]) return;
-            room.state = "ended";
-
-            const loser = room.players[socket.id];
-            const winner = room.players[opponentId];
-            if (!loser || !winner) return;
-
-            const summary = buildGameSummary(room);
-            let eloChanges = null;
-
-            if (room.mode === "ranked") {
-              const winnerLostShipsCount = (winner.ships || []).filter((s) => s.hits >= s.len).length;
-              eloChanges = updateElo(winner.name, loser.name, winnerLostShipsCount);
-              await syncMatchStatsToSupabase(winner, loser);
+          // For ranked matches we give a 60s window to reconnect before ending the game.
+          if (room.mode === "ranked") {
+            if (opponentId) {
+              io.to(opponentId).emit("opponent_disconnected", { timeout: 60 });
             }
 
-            io.to(code).emit("game_over", {
-              winnerId: opponentId,
-              loserId: socket.id,
-              mode: room.mode,
-              summary,
-              eloChanges,
-              forfeit: true,
-            });
-          }, 60000);
+            if (!room.disconnectTimeouts) {
+              room.disconnectTimeouts = {};
+            }
+
+            room.disconnectTimeouts[socket.id] = setTimeout(async () => {
+              delete room.disconnectTimeouts[socket.id];
+              if (room.state !== "playing") return;
+              if (!room.players[socket.id]) return;
+              room.state = "ended";
+
+              const loser = room.players[socket.id];
+              const winner = room.players[opponentId];
+              if (!loser || !winner) return;
+
+              const summary = buildGameSummary(room);
+              let eloChanges = null;
+
+              if (room.mode === "ranked") {
+                const winnerLostShipsCount = (winner.ships || []).filter((s) => s.hits >= s.len).length;
+                eloChanges = updateElo(winner.name, loser.name, winnerLostShipsCount);
+                await syncMatchStatsToSupabase(winner, loser);
+              }
+
+              io.to(code).emit("game_over", {
+                winnerId: opponentId,
+                loserId: socket.id,
+                mode: room.mode,
+                summary,
+                eloChanges,
+                forfeit: true,
+              });
+            }, 60000);
+          }
         } else if (room.state === "waiting") {
           delete room.players[socket.id];
           if (getRoomParticipantCount(room) === 0) {

@@ -1098,6 +1098,10 @@ export function renderGame(root, { roomId }) {
     updateStatus(`Opponent disconnected! They have ${data.timeout}s to reconnect or they forfeit...`);
   });
 
+  socket.on("opponent_reconnected", (data) => {
+    updateStatus("Opponent reconnected. Resuming game...");
+  });
+
   socket.on("role_change_error", (data) => {
     updateStatus(data?.message || "Unable to change role.");
   });

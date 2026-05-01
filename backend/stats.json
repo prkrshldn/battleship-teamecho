@@ -25,12 +25,12 @@
   },
   "burneraccount": {
     "name": "burneraccount",
-    "elo": 1010,
-    "wins": 4,
-    "losses": 3,
+    "elo": 1005,
+    "wins": 6,
+    "losses": 5,
     "powerups": {
-      "sonar": 3,
-      "doubleShot": 5
+      "sonar": 6,
+      "doubleShot": 8
     },
     "currentWinStreak": 0,
     "highestEloReached": 1029
@@ -97,26 +97,26 @@
   },
   "Poopy": {
     "name": "Poopy",
-    "elo": 1017,
-    "wins": 1,
+    "elo": 1033,
+    "wins": 2,
     "losses": 0,
     "powerups": {
-      "sonar": 1,
-      "doubleShot": 2
+      "sonar": 2,
+      "doubleShot": 4
     },
-    "currentWinStreak": 1,
-    "highestEloReached": 1017
+    "currentWinStreak": 2,
+    "highestEloReached": 1033
   },
   "th3skeleton2": {
     "name": "th3skeleton2",
-    "elo": 985,
-    "wins": 0,
-    "losses": 1,
+    "elo": 974,
+    "wins": 1,
+    "losses": 3,
     "powerups": {
-      "sonar": 2,
-      "doubleShot": 3
+      "sonar": 3,
+      "doubleShot": 5
     },
-    "currentWinStreak": 0,
+    "currentWinStreak": 1,
     "highestEloReached": 1000
   }
 }
