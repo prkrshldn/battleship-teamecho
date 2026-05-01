@@ -358,7 +358,7 @@ button:focus-visible {
 }
 
 #status {
-  font-size: 1.4rem;
+  font-size: 1.4em;
   font-weight: 700;
   color: #fff;
   background: rgba(0, 240, 255, 0.15);

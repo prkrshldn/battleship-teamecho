@@ -128,6 +128,9 @@ export function renderGame(root, { roomId }) {
   const viewerRole = ["left", "right", "middle"].includes(state.roomRole) ? state.roomRole : "left";
   const isSpectator = viewerRole === "middle";
   const viewerRoleLabel = isSpectator ? "Spectator" : viewerRole === "left" ? "Left side" : "Right side";
+  const roleSummaryHtml = matchMode === "local"
+    ? ` · Role: <span class="mono">${viewerRoleLabel}</span>`
+    : "";
 
   const settings = state.settings;
   const boardSize = settings.boardSize || 10;
@@ -156,7 +159,7 @@ export function renderGame(root, { roomId }) {
     <div class="topbar">
       <div>
         <h1>Game</h1>
-        <p class="muted">Mode: <span class="mono">${isCpuMode ? "VS CPU" : matchMode}</span> · Room: <span class="mono">${code}</span> · Role: <span class="mono">${viewerRoleLabel}</span> · Player: <span class="mono" style="display:inline-flex; align-items:center; gap:4px; vertical-align:middle; margin-top:-4px;">${playerRank.svg} ${state.playerName || "?"}</span></p>
+        <p class="muted">Mode: <span class="mono">${isCpuMode ? "VS CPU" : matchMode}</span> · Room: <span class="mono">${code}</span>${roleSummaryHtml} · Player: <span class="mono" style="display:inline-flex; align-items:center; gap:4px; vertical-align:middle; margin-top:-4px;">${playerRank.svg} ${state.playerName || "?"}</span></p>
         ${settingsSummaryHtml}
         <a class="btn" href="#/lobby">Leave</a>
       </div>
@@ -639,8 +642,18 @@ export function renderGame(root, { roomId }) {
   };
 
   const onJoinSuccess = (data) => {
-    if (data?.role) {
-      setRoomRole(data.role);
+    const serverRole = ["left", "right", "middle"].includes(data?.role) ? data.role : null;
+    if (serverRole) {
+      setRoomRole(serverRole);
+      if (matchMode === "local" && serverRole !== viewerRole) {
+        suppressUnloadRejoin = true;
+        hasJoined = false;
+        requiresManualRejoin = false;
+        sessionStorage.removeItem(rejoinStorageKey);
+        updateStatus("Syncing assigned role...");
+        window.location.reload();
+        return;
+      }
     }
 
     const roomSettings = normalizeRoomSettings(data?.settings);

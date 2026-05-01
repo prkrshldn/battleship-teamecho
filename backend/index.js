@@ -645,8 +645,31 @@ function createRoomSpectator(socketId, name, user) {
 function getAutoLocalJoinRole(room) {
   const activePlayers = Object.values(room.players || {});
 
-  if (activePlayers.length === 0) return "left";
-  if (activePlayers.length === 1) return "right";
+  const leftTaken = activePlayers.some((player) => player.role === "left");
+  const rightTaken = activePlayers.some((player) => player.role === "right");
+
+  if (!leftTaken) return "left";
+  if (!rightTaken) return "right";
+  return "middle";
+}
+
+function resolveLocalJoinRole(room, preferredRole) {
+  const normalizedPreferred = ["left", "right", "middle"].includes(preferredRole)
+    ? preferredRole
+    : "left";
+
+  if (normalizedPreferred === "middle") {
+    return "middle";
+  }
+
+  const activePlayers = Object.values(room.players || {});
+  const leftTaken = activePlayers.some((player) => player.role === "left");
+  const rightTaken = activePlayers.some((player) => player.role === "right");
+
+  if (!leftTaken && normalizedPreferred === "left") return "left";
+  if (!rightTaken && normalizedPreferred === "right") return "right";
+  if (!leftTaken) return "left";
+  if (!rightTaken) return "right";
   return "middle";
 }
 
@@ -1085,18 +1108,14 @@ io.on("connection", (socket) => {
 
       console.log(`${playerName} reconnected to ${code} as spectator`);
     } else if (!isAlreadyInRoom) {
-      const joinRole = room.mode === "local" ? autoJoinRole : requestedRole;
+      const joinRole = room.mode === "local"
+        ? resolveLocalJoinRole(room, autoJoinRole)
+        : requestedRole;
 
       if (room.mode === "local" && joinRole === "middle") {
         room.spectators[socket.id] = createRoomSpectator(socket.id, playerName, socket.data.user);
         console.log(`${playerName} joined ${code} as spectator`);
       } else {
-        const occupiedPlayer = Object.values(room.players).find((player) => player.role === joinRole);
-        if (occupiedPlayer) {
-          socket.emit("join_error", { message: `${joinRole === "left" ? "Left" : "Right"} side is already taken` });
-          return;
-        }
-
         room.players[socket.id] = createRoomPlayer(
           socket.id,
           playerName,
