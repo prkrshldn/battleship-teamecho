@@ -158,8 +158,6 @@ export function renderLogin(app) {
       // Redirect to lobby
       window.location.hash = "#/lobby";
     } catch (error) {
-      form.innerHTML = ""; // clear form to prevent multiple submits
-      form.appendChild(errorDiv); // re-add error div
       errorDiv.textContent = getAuthErrorMessage(error);
       errorDiv.style.display = "block";
       submitBtn.disabled = false;

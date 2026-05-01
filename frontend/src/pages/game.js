@@ -1,9 +1,122 @@
-import { state } from "../state";
+import { state, setSettings, setRoomRole } from "../state";
 import { createBoard } from "../components/board";
 import { socket, connectSocket } from "../socket";
 import { getShipInfo } from "../util/shipGetInfo";
 import { getRank } from "../util/rank";
 import { getCurrentUser } from "../auth";
+
+// Game state persistence helpers
+function saveGameState(roomCode, gameData) {
+  try {
+    sessionStorage.setItem(`game_state_${roomCode}`, JSON.stringify(gameData));
+  } catch (e) {
+    console.warn("Failed to save game state:", e);
+  }
+}
+
+function loadGameState(roomCode) {
+  try {
+    const data = sessionStorage.getItem(`game_state_${roomCode}`);
+    return data ? JSON.parse(data) : null;
+  } catch (e) {
+    console.warn("Failed to load game state:", e);
+    return null;
+  }
+}
+
+function clearGameState(roomCode) {
+  try {
+    sessionStorage.removeItem(`game_state_${roomCode}`);
+  } catch (e) {
+    console.warn("Failed to clear game state:", e);
+  }
+}
+
+function normalizeRoomSettings(raw) {
+  if (!raw || typeof raw !== "object") return null;
+
+  const boardSizeValue = Number(raw.boardSize);
+  const boardSize = [8, 10, 12].includes(boardSizeValue) ? boardSizeValue : 10;
+  const difficultyValue = String(raw.difficulty || "normal").toLowerCase();
+  const difficulty = ["easy", "normal", "hard"].includes(difficultyValue)
+    ? difficultyValue
+    : "normal";
+
+  const ships = Array.isArray(raw.ships)
+    ? raw.ships
+      .map((ship) => ({
+        key: String(ship?.key || ""),
+        label: String(ship?.label || ship?.key || "Ship"),
+        len: Number(ship?.len),
+      }))
+      .filter((ship) => ship.key && Number.isFinite(ship.len) && ship.len >= 2 && ship.len <= 6)
+    : [];
+
+  return {
+    boardSize,
+    difficulty,
+    ships,
+  };
+}
+
+function roomSettingsEqual(left, right) {
+  const a = normalizeRoomSettings(left);
+  const b = normalizeRoomSettings(right);
+  if (!a || !b) return false;
+  if (a.boardSize !== b.boardSize || a.difficulty !== b.difficulty) return false;
+  if (a.ships.length !== b.ships.length) return false;
+
+  return a.ships.every((ship, idx) => {
+    const other = b.ships[idx];
+    return (
+      ship.key === other.key
+      && ship.label === other.label
+      && ship.len === other.len
+    );
+  });
+}
+
+function cloneGrid(grid) {
+  if (!Array.isArray(grid)) return null;
+  return grid.map((row) => (Array.isArray(row) ? row.slice() : row));
+}
+
+function buildDisplayGrid(participant) {
+  if (!participant || !Array.isArray(participant.board)) return null;
+
+  const grid = cloneGrid(participant.board) || [];
+  const shotsReceived = Array.isArray(participant.shotsReceived) ? participant.shotsReceived : [];
+  const ships = Array.isArray(participant.ships) ? participant.ships : [];
+
+  for (let r = 0; r < grid.length; r++) {
+    for (let c = 0; c < grid[r].length; c++) {
+      if (shotsReceived[r] && Number.isFinite(shotsReceived[r][c]) && shotsReceived[r][c] !== 0) {
+        grid[r][c] = shotsReceived[r][c];
+      }
+    }
+  }
+
+  for (const ship of ships) {
+    if ((ship.hits || 0) >= ship.len && Array.isArray(ship.coords)) {
+      for (const coord of ship.coords) {
+        if (grid[coord.r] && Number.isFinite(grid[coord.r][coord.c])) {
+          grid[coord.r][coord.c] = 4;
+        }
+      }
+    }
+  }
+
+  return grid;
+}
+
+function sortParticipantsByRole(participants = []) {
+  const roleOrder = { left: 0, right: 1, middle: 2 };
+  return [...participants].sort((left, right) => {
+    const leftOrder = roleOrder[left?.role] ?? 99;
+    const rightOrder = roleOrder[right?.role] ?? 99;
+    return leftOrder - rightOrder;
+  });
+}
 
 export function renderGame(root, { roomId }) {
   const el = document.createElement("div");
@@ -12,6 +125,12 @@ export function renderGame(root, { roomId }) {
   const code = roomId || state.roomId || "?????";
   const matchMode = ["ranked", "cpu"].includes(state.matchMode) ? state.matchMode : "local";
   const isCpuMode = matchMode === "cpu";
+  const viewerRole = ["left", "right", "middle"].includes(state.roomRole) ? state.roomRole : "left";
+  const isSpectator = viewerRole === "middle";
+  const viewerRoleLabel = isSpectator ? "Spectator" : viewerRole === "left" ? "Left side" : "Right side";
+  const roleSummaryHtml = matchMode === "local"
+    ? ` · Role: <span class="mono">${viewerRoleLabel}</span>`
+    : "";
 
   const settings = state.settings;
   const boardSize = settings.boardSize || 10;
@@ -40,7 +159,7 @@ export function renderGame(root, { roomId }) {
     <div class="topbar">
       <div>
         <h1>Game</h1>
-        <p class="muted">Mode: <span class="mono">${isCpuMode ? "VS CPU" : matchMode}</span> · Room: <span class="mono">${code}</span> · Player: <span class="mono" style="display:inline-flex; align-items:center; gap:4px; vertical-align:middle; margin-top:-4px;">${playerRank.svg} ${state.playerName || "?"}</span></p>
+        <p class="muted">Mode: <span class="mono">${isCpuMode ? "VS CPU" : matchMode}</span> · Room: <span class="mono">${code}</span>${roleSummaryHtml} · Player: <span class="mono" style="display:inline-flex; align-items:center; gap:4px; vertical-align:middle; margin-top:-4px;">${playerRank.svg} ${state.playerName || "?"}</span></p>
         ${settingsSummaryHtml}
         <a class="btn" href="#/lobby">Leave</a>
       </div>
@@ -50,7 +169,7 @@ export function renderGame(root, { roomId }) {
       <div class="panel">
         <h2 id="setup-heading">Setup</h2>
         <div id="setup-controls">
-          <p class="muted">Place your ships, then click Ready.</p>
+          <p class="muted" id="setup-intro">Place your ships, then click Ready.</p>
           <div class="row">
             <label class="label">Ship</label>
             <select class="input" id="ship">
@@ -71,6 +190,19 @@ export function renderGame(root, { roomId }) {
 
         <h2>Status</h2>
         <p id="status" class="mono">Connecting…</p>
+        <div id="role-controls" style="display:none; margin-top:10px;">
+          <div class="row" style="align-items:center; gap:8px;">
+            <label class="label" for="roomRoleSelect" style="margin:0;">Role</label>
+            <select class="input" id="roomRoleSelect" style="max-width:220px;">
+              <option value="left">Left side</option>
+              <option value="right">Right side</option>
+              <option value="middle">Middle spectator</option>
+            </select>
+            <button class="btn ghost" id="applyRoomRole" type="button">Apply</button>
+          </div>
+          <p id="roleControlsHint" class="tiny muted" style="margin-top:6px;">Role changes are available in local rooms before match start.</p>
+        </div>
+        <button class="btn ghost" id="rejoinGame" style="display:none; margin-top:8px;">Rejoin Game</button>
         
         <div class="hr"></div>
         <p class="tiny muted" id="debug"></p>
@@ -104,12 +236,12 @@ export function renderGame(root, { roomId }) {
 
       <div class="boards">
         <div class="boardWrap">
-          <h2>Your board</h2>
+          <h2 id="primary-board-title">Your board</h2>
           <div id="myBoard"></div>
         </div>
 
         <div class="boardWrap">
-          <h2>Opponent</h2>
+          <h2 id="secondary-board-title">Opponent</h2>
           <div id="oppBoard"></div>
         </div>
       </div>
@@ -192,6 +324,11 @@ export function renderGame(root, { roomId }) {
 
   const shipSelect = el.querySelector("#ship");
   const status = el.querySelector("#status");
+  const roleControls = el.querySelector("#role-controls");
+  const roleSelect = el.querySelector("#roomRoleSelect");
+  const applyRoleBtn = el.querySelector("#applyRoomRole");
+  const roleControlsHint = el.querySelector("#roleControlsHint");
+  const rejoinBtn = el.querySelector("#rejoinGame");
   const debug = el.querySelector("#debug");
   const setupHeading = el.querySelector("#setup-heading");
   const setupPanel = el.querySelector("#setup-controls");
@@ -207,6 +344,8 @@ export function renderGame(root, { roomId }) {
   const countDoubleShot = el.querySelector("#count-doubleshot");
   const timerPanel = el.querySelector("#timer-panel");
   const timerDisplay = el.querySelector("#timer-display");
+  const primaryBoardTitle = el.querySelector("#primary-board-title");
+  const secondaryBoardTitle = el.querySelector("#secondary-board-title");
   const placed = new Set(); // tracks placed ship keys
 
   let timerInterval = null;
@@ -237,6 +376,137 @@ export function renderGame(root, { roomId }) {
     clearInterval(timerInterval);
     timerDisplay.textContent = "--";
     timerDisplay.style.color = "#666";
+  }
+
+  function setRoleControlsState(roomData) {
+    if (!roleControls || !roleSelect || !applyRoleBtn) return;
+
+    const canShow = !isCpuMode && matchMode === "local";
+    roleControls.style.display = canShow ? "block" : "none";
+    if (!canShow) return;
+
+    roleSelect.value = viewerRole;
+
+    const stateValue = roomData?.state;
+    const inPlay = stateValue === "playing";
+    roleSelect.disabled = inPlay;
+    applyRoleBtn.disabled = inPlay;
+    roleControlsHint.textContent = inPlay
+      ? "Role is locked once the match starts."
+      : "Select left, right, or middle and apply to switch role in this room.";
+  }
+
+  function setSpectatorLayout() {
+    if (!isSpectator) return;
+    setupHeading.style.display = "none";
+    setupPanel.style.display = "none";
+    setupPanel.style.pointerEvents = "none";
+    fleetPanel.style.display = "none";
+    powerupPanel.style.display = "none";
+    timerPanel.style.display = "none";
+    rejoinBtn.style.display = "none";
+  }
+
+  function updateBoardTitles(snapshot) {
+    if (!isSpectator) {
+      primaryBoardTitle.textContent = "Your board";
+      secondaryBoardTitle.textContent = "Opponent";
+      return;
+    }
+
+    const participants = sortParticipantsByRole(snapshot?.players || []);
+    const leftPlayer = participants.find((participant) => participant.role === "left") || participants[0];
+    const rightPlayer = participants.find((participant) => participant.role === "right") || participants[1];
+
+    primaryBoardTitle.textContent = leftPlayer ? `${leftPlayer.name || "Left side"} (Left)` : "Left side";
+    secondaryBoardTitle.textContent = rightPlayer ? `${rightPlayer.name || "Right side"} (Right)` : "Right side";
+  }
+
+  function syncSpectatorBoards(snapshot) {
+    if (!isSpectator || !snapshot) return;
+
+    const participants = sortParticipantsByRole(snapshot.players || []);
+    const leftPlayer = participants.find((participant) => participant.role === "left") || participants[0];
+    const rightPlayer = participants.find((participant) => participant.role === "right") || participants[1];
+
+    if (leftPlayer) {
+      const grid = buildDisplayGrid(leftPlayer);
+      if (grid) my.setGrid(grid);
+      if (Array.isArray(leftPlayer.ships)) my.setShips(leftPlayer.ships);
+    }
+
+    if (rightPlayer) {
+      const grid = buildDisplayGrid(rightPlayer);
+      if (grid) opp.setGrid(grid);
+      if (Array.isArray(rightPlayer.ships)) opp.setShips(rightPlayer.ships);
+    }
+
+    updateBoardTitles(snapshot);
+  }
+
+  setSpectatorLayout();
+  updateBoardTitles();
+  setRoleControlsState();
+
+  function getSunkShipsFromUI() {
+    const sunkShips = [];
+    el.querySelectorAll("#enemy-fleet .ship-item.sunk").forEach((shipEl) => {
+      sunkShips.push(shipEl.id.replace("enemy-ship-", ""));
+    });
+    return sunkShips;
+  }
+
+  function persistGameState() {
+    saveGameState(code, {
+      myGrid: my.grid,
+      oppGrid: opp.grid,
+      myShips: my.getShips(),
+      oppShips: opp.getShips(),
+      myHits,
+      myMisses,
+      myShipsSunk,
+      sonarCount,
+      doubleShotCount,
+      sunkShips: getSunkShipsFromUI(),
+      isMyTurn,
+      gameActive,
+    });
+  }
+
+  function restoreGameState(savedState) {
+    if (!savedState) return;
+
+    if (Array.isArray(savedState.myShips)) {
+      my.setShips(savedState.myShips);
+    }
+    if (Array.isArray(savedState.oppShips)) {
+      opp.setShips(savedState.oppShips);
+    }
+
+    if (Array.isArray(savedState.myGrid)) {
+      my.setGrid(savedState.myGrid);
+    }
+    if (Array.isArray(savedState.oppGrid)) {
+      opp.setGrid(savedState.oppGrid);
+    }
+
+    myHits = Number(savedState.myHits) || 0;
+    myMisses = Number(savedState.myMisses) || 0;
+    myShipsSunk = Number(savedState.myShipsSunk) || 0;
+    sonarCount = Number(savedState.sonarCount) || 0;
+    doubleShotCount = Number(savedState.doubleShotCount) || 0;
+
+    hitCountEl.textContent = myHits;
+    missCountEl.textContent = myMisses;
+    countSonar.textContent = sonarCount;
+    countDoubleShot.textContent = doubleShotCount;
+
+    if (Array.isArray(savedState.sunkShips)) {
+      savedState.sunkShips.forEach((shipId) => {
+        const shipEl = el.querySelector(`#enemy-ship-${shipId}`);
+        if (shipEl) shipEl.classList.add("sunk");
+      });
+    }
   }
 
   // --- Helper Functions ---
@@ -306,23 +576,126 @@ export function renderGame(root, { roomId }) {
   }
 
   // --- Socket Logic ---
+  let hasJoined = false;
+  let joinRetryTimer = null;
+  let suppressUnloadRejoin = false;
+  const rejoinStorageKey = `battleship:pending-rejoin:${code}`;
+  let requiresManualRejoin = !isCpuMode && sessionStorage.getItem(rejoinStorageKey) === "1";
+
+  const attemptJoin = () => {
+    if (isCpuMode || hasJoined || requiresManualRejoin) return;
+    socket.emit("join", code, state.playerName, {
+      mode: matchMode,
+      role: viewerRole,
+      settings: {
+        boardSize: state.settings?.boardSize,
+        difficulty: state.settings?.difficulty,
+        ships: state.settings?.ships,
+      },
+    });
+    console.log(`${state.playerName} joining ${matchMode} room: ${code}`);
+  };
+
   const onConnect = () => {
-    if (!isCpuMode) {
-      socket.emit("join", code, state.playerName, { mode: matchMode });
-      console.log(`${state.playerName} joining ${matchMode} room: ${code}`);
+    if (requiresManualRejoin) {
+      hasJoined = false;
+      updateStatus("You were disconnected by refresh. Click Rejoin Game.");
+      if (!isSpectator) rejoinBtn.style.display = "inline-block";
+      return;
+    }
+    attemptJoin();
+  };
+
+  const onConnectError = (err) => {
+    const message = err?.message || "Unable to connect to game server.";
+    if (message.toLowerCase().includes("unauthorized")) {
+      updateStatus("Session expired. Please log in again.");
+      window.location.hash = "#/";
+      return;
+    }
+
+    updateStatus(isSpectator ? "Connection issue while spectating." : "Connection issue. Click Rejoin Game to retry.");
+    if (!isSpectator) rejoinBtn.style.display = "inline-block";
+  };
+
+  const onDisconnect = () => {
+    if (isCpuMode) return;
+    hasJoined = false;
+    updateStatus(isSpectator ? "Disconnected from room." : "Disconnected from game. Click Rejoin Game.");
+    if (!isSpectator) rejoinBtn.style.display = "inline-block";
+  };
+
+  const onReconnected = (data) => {
+    updateStatus("Reconnected to the game!");
+    hasJoined = true;
+    requiresManualRejoin = false;
+    sessionStorage.removeItem(rejoinStorageKey);
+    if (joinRetryTimer) {
+      clearTimeout(joinRetryTimer);
+      joinRetryTimer = null;
+    }
+    rejoinBtn.style.display = "none";
+    // If the game already started, we stay in the current state
+    if (data.isReady) {
+      setAllPlacedUI();
     }
   };
 
-  const onConnectError = () => {
-    updateStatus("Session expired. Please log in again.");
-    window.location.hash = "#/";
+  const onJoinSuccess = (data) => {
+    const serverRole = ["left", "right", "middle"].includes(data?.role) ? data.role : null;
+    if (serverRole) {
+      setRoomRole(serverRole);
+      if (matchMode === "local" && serverRole !== viewerRole) {
+        suppressUnloadRejoin = true;
+        hasJoined = false;
+        requiresManualRejoin = false;
+        sessionStorage.removeItem(rejoinStorageKey);
+        updateStatus("Syncing assigned role...");
+        window.location.reload();
+        return;
+      }
+    }
+
+    const roomSettings = normalizeRoomSettings(data?.settings);
+    if (!isCpuMode && roomSettings && !roomSettingsEqual(state.settings, roomSettings)) {
+      setSettings(roomSettings);
+      suppressUnloadRejoin = true;
+      hasJoined = false;
+      requiresManualRejoin = false;
+      sessionStorage.removeItem(rejoinStorageKey);
+      updateStatus("Syncing room settings...");
+      window.location.reload();
+      return;
+    }
+
+    hasJoined = true;
+    requiresManualRejoin = false;
+    sessionStorage.removeItem(rejoinStorageKey);
+    if (joinRetryTimer) {
+      clearTimeout(joinRetryTimer);
+      joinRetryTimer = null;
+    }
+    rejoinBtn.style.display = "none";
+
+    if (isSpectator && data?.snapshot) {
+      syncSpectatorBoards(data.snapshot);
+      updateStatus(data?.state === "playing" ? "Spectating live match." : "Spectating local room.");
+    }
+
+    setRoleControlsState(data);
   };
 
   socket.on("connect", onConnect);
   socket.on("connect_error", onConnectError);
+  socket.on("disconnect", onDisconnect);
+  socket.on("reconnected", onReconnected);
+  socket.on("join_success", onJoinSuccess);
 
   const onJoinError = (data) => {
-    updateStatus(data?.message || "Failed to join this room.");
+    const message = data?.message || "Failed to join this room.";
+    hasJoined = false;
+    updateStatus(message);
+    if (!isSpectator) rejoinBtn.style.display = "inline-block";
   };
 
   socket.on("join_error", onJoinError);
@@ -345,6 +718,8 @@ export function renderGame(root, { roomId }) {
       opp.markSonar(cell.r, cell.c);
     });
     startTimer();
+
+    persistGameState();
   });
 
   socket.on("double_shot_activated", (data) => {
@@ -352,6 +727,8 @@ export function renderGame(root, { roomId }) {
     doubleShotCount = data.remaining;
     countDoubleShot.textContent = doubleShotCount;
     document.body.classList.add("double-shot-active");
+
+    persistGameState();
   });
 
   socket.on("bonus_turn", (data) => {
@@ -359,32 +736,68 @@ export function renderGame(root, { roomId }) {
     updateStatus(data.message);
     isMyTurn = true;
     startTimer();
+
+    persistGameState();
   });
 
   socket.on("room_update", (data) => {
-    // data.players = [{name, ready}, ...]
-    const count = data.players.length;
-    const readyCount = data.players.filter((p) => p.ready).length;
-    debug.textContent = `Players in room: ${count}. Ready: ${readyCount}`;
+    const iAmInRoom = Array.isArray(data?.participants)
+      ? data.participants.some((p) => p.id === socket.id)
+      : Array.isArray(data?.players)
+        ? data.players.some((p) => p.id === socket.id)
+        : false;
+    if (iAmInRoom) {
+      hasJoined = true;
+      rejoinBtn.style.display = "none";
+      if (joinRetryTimer) {
+        clearTimeout(joinRetryTimer);
+        joinRetryTimer = null;
+      }
+    }
+
+    if (isSpectator && data?.snapshot) {
+      syncSpectatorBoards(data.snapshot);
+    }
+
+    const players = Array.isArray(data?.players) ? data.players : [];
+    const spectators = Array.isArray(data?.spectators) ? data.spectators : [];
+    const count = Array.isArray(data?.participants) ? data.participants.length : players.length + spectators.length;
+    const readyCount = players.filter((p) => p.ready).length;
+    debug.textContent = `Players in room: ${players.length}. Spectators: ${spectators.length}. Ready: ${readyCount}`;
 
     if (!gameActive) {
-      updateStatus(
-        count < 2
-          ? "Waiting for opponent to join..."
-          : "Opponent connected. Place ships!",
-      );
+      if (isSpectator) {
+        updateStatus(data?.state === "playing" ? "Spectating live match." : "Spectating local room.");
+      } else {
+        updateStatus(
+          count < 2
+            ? "Waiting for opponent to join..."
+            : "Opponent connected. Place ships!",
+        );
+      }
     }
+
+    setRoleControlsState(data);
   });
 
   if (isCpuMode) {
     updateStatus("Place your ships, then click Ready.");
     debug.textContent = "CPU opponent selected.";
   } else {
-    if (socket.connected) {
+    if (requiresManualRejoin) {
+      hasJoined = false;
+      updateStatus("You were disconnected by refresh. Click Rejoin Game.");
+      rejoinBtn.style.display = "inline-block";
+      if (!socket.connected) {
+        connectSocket().catch((err) => {
+          onConnectError(err);
+        });
+      }
+    } else if (socket.connected) {
       onConnect();
     } else {
-      connectSocket().catch(() => {
-        onConnectError();
+      connectSocket().catch((err) => {
+        onConnectError(err);
       });
     }
   }
@@ -403,38 +816,80 @@ export function renderGame(root, { roomId }) {
   renderEnemyFleet();
 
   socket.on("game_start", (data) => {
+    if (isSpectator && data?.snapshot) {
+      syncSpectatorBoards(data.snapshot);
+    }
+
+    hasJoined = true;
+    rejoinBtn.style.display = "none";
+    if (joinRetryTimer) {
+      clearTimeout(joinRetryTimer);
+      joinRetryTimer = null;
+    }
+
     gameActive = true;
     setupHeading.style.display = "none";
-    setupPanel.style.display = "none"; // Hide setup controls
+    setupPanel.style.display = "none";
     setupPanel.style.pointerEvents = "none";
-    fleetPanel.style.visibility = "visible"; // Show fleet status
-    fleetPanel.style.display = "block";
-    powerupPanel.style.display = "block"; // Show powerups
 
-    isMyTurn = data.turn === socket.id;
-    updateStatus(
-      isMyTurn
-        ? "Game Started! YOUR TURN. Fire!"
-        : "Game Started! Opponent's turn.",
-    );
+    if (isSpectator) {
+      fleetPanel.style.display = "none";
+      powerupPanel.style.display = "none";
+      timerPanel.style.display = "none";
+      updateStatus("Spectating live match.");
+      isMyTurn = false;
+      stopTimer();
+    } else {
+      fleetPanel.style.visibility = "visible";
+      fleetPanel.style.display = "block";
+      powerupPanel.style.display = "block";
 
-    timerPanel.style.display = "block";
-    if (isMyTurn) startTimer();
-    else stopTimer();
+      isMyTurn = data.turn === socket.id;
+      updateStatus(
+        isMyTurn
+          ? "Game Started! YOUR TURN. Fire!"
+          : "Game Started! Opponent's turn.",
+      );
+
+      timerPanel.style.display = "block";
+      if (isMyTurn) startTimer();
+      else stopTimer();
+    }
+
+    if (data?.rejoin) {
+      restoreGameState(loadGameState(code));
+    }
+
+    persistGameState();
+
+    setRoleControlsState({ state: "playing" });
 
     // Switch boards to game mode visual if needed
   });
 
   socket.on("turn_change", (data) => {
+    if (isSpectator) {
+      updateStatus("Spectating live match.");
+      return;
+    }
+
     document.body.classList.remove("double-shot-active");
     isMyTurn = data.turn === socket.id;
     updateStatus(isMyTurn ? "YOUR TURN. Fire!" : "Opponent's turn...");
     
     if (isMyTurn) startTimer();
     else stopTimer();
+
+    persistGameState();
   });
 
   socket.on("shot_result", (data) => {
+    if (isSpectator && data?.snapshot) {
+      syncSpectatorBoards(data.snapshot);
+      persistGameState();
+      return;
+    }
+
     // data = { shooter, r, c, hit }
     const iShot = data.shooter === socket.id;
     
@@ -498,26 +953,44 @@ export function renderGame(root, { roomId }) {
         my.markSunk(data.sunk);
       }
     }
+
+    persistGameState();
   });
 
   socket.on("game_over", (data) => {
     gameActive = false;
     isMyTurn = false;
+    requiresManualRejoin = false;
+    sessionStorage.removeItem(rejoinStorageKey);
     stopTimer();
 
-    const iWon = data.winnerId === socket.id;
+  // Clear saved game state
+  clearGameState(code);
+
+    if (isSpectator && data?.snapshot) {
+      syncSpectatorBoards(data.snapshot);
+    }
+
     const isForfeit = data.forfeit;
-    updateStatus(iWon ? `GAME OVER — YOU WIN 🏆 ${isForfeit ? "(Opponent Forfeited)" : ""}` : `GAME OVER — YOU LOSE ${isForfeit ? "(You Forfeited)" : ""}`);
 
+    const summaryEntries = sortParticipantsByRole(Object.values(data.summary || {}));
+    const mySummary = data.summary?.[socket.id] || null;
+    const oppId = mySummary ? Object.keys(data.summary).find((id) => id !== socket.id) : null;
+    const oppSummary = oppId ? data.summary[oppId] : null;
+    const spectatorView = isSpectator || !mySummary;
 
-    const mySummary = data.summary[socket.id];
-    const oppId = Object.keys(data.summary).find((id) => id !== socket.id);
-    const oppSummary = data.summary[oppId];
+    if (spectatorView) {
+      updateStatus(`MATCH OVER ${isForfeit ? "(Forfeit)" : ""}`.trim());
+    } else {
+      const iWon = data.winnerId === socket.id;
+      updateStatus(iWon ? `GAME OVER — YOU WIN 🏆 ${isForfeit ? "(Opponent Forfeited)" : ""}` : `GAME OVER — YOU LOSE ${isForfeit ? "(You Forfeited)" : ""}`);
+    }
 
     let myEloHtml = "";
     let oppEloHtml = "";
     let powerupMsg = "";
-    if (data.eloChanges) {
+    if (!spectatorView && data.eloChanges) {
+      const iWon = data.winnerId === socket.id;
       const myEloChange = iWon ? `+${data.eloChanges.winnerGain}` : `${data.eloChanges.loserLoss}`;
       const myNewElo = iWon ? data.eloChanges.winnerNewElo : data.eloChanges.loserNewElo;
       const myOldElo = iWon ? data.eloChanges.winnerOldElo : data.eloChanges.loserOldElo;
@@ -561,31 +1034,52 @@ export function renderGame(root, { roomId }) {
       }
     }
 
+    const spectatorSummaryHtml = spectatorView
+      ? `
+        <div class="summary-grid">
+          ${summaryEntries
+            .slice(0, 2)
+            .map((entry) => `
+              <div>
+                <h3>${entry.role === "left" ? "Left side" : entry.role === "right" ? "Right side" : entry.name || "Player"}</h3>
+                <p class="muted">${entry.name || "Player"}</p>
+                <p class="mono">Hits: ${entry.hits} · Misses: ${entry.misses}</p>
+                <p class="mono">Ships sunk: ${entry.shipsSunk}</p>
+                <p class="tiny muted">Sunk: ${(entry.sunkShips || []).join(", ") || "—"}</p>
+              </div>
+            `)
+            .join("")}
+        </div>
+      `
+      : "";
+
     // Render a simple end-of-game summary panel
     const modal = document.createElement("div");
     modal.className = "modal";
     modal.innerHTML = `
       <div class="modal-card">
-        <h2>${iWon ? "Victory" : "Defeat"} ${isForfeit ? "<span style='font-size: 0.6em; color: #f87171;'>(Forfeit)</span>" : ""}</h2>
+        <h2>${spectatorView ? "Match Complete" : (data.winnerId === socket.id ? "Victory" : "Defeat")} ${isForfeit ? "<span style='font-size: 0.6em; color: #f87171;'>(Forfeit)</span>" : ""}</h2>
         <p class="muted">End-of-game summary</p>
         <div class="hr"></div>
-        <div class="summary-grid">
-          <div>
-            <h3>You</h3>
-            ${powerupMsg}
-            ${myEloHtml}
-            <p class="mono">Hits: ${mySummary.hits} · Misses: ${mySummary.misses}</p>
-            <p class="mono">Ships sunk: ${mySummary.shipsSunk}</p>
-            <p class="tiny muted">Sunk: ${(mySummary.sunkShips || []).join(", ") || "—"}</p>
+        ${spectatorView ? spectatorSummaryHtml : `
+          <div class="summary-grid">
+            <div>
+              <h3>You</h3>
+              ${powerupMsg}
+              ${myEloHtml}
+              <p class="mono">Hits: ${mySummary.hits} · Misses: ${mySummary.misses}</p>
+              <p class="mono">Ships sunk: ${mySummary.shipsSunk}</p>
+              <p class="tiny muted">Sunk: ${(mySummary.sunkShips || []).join(", ") || "—"}</p>
+            </div>
+            <div>
+              <h3>${oppSummary?.name || "Opponent"}</h3>
+              ${oppEloHtml}
+              <p class="mono">Hits: ${oppSummary?.hits ?? 0} · Misses: ${oppSummary?.misses ?? 0}</p>
+              <p class="mono">Ships sunk: ${oppSummary?.shipsSunk ?? 0}</p>
+              <p class="tiny muted">Sunk: ${(oppSummary?.sunkShips || []).join(", ") || "—"}</p>
+            </div>
           </div>
-          <div>
-            <h3>${oppSummary?.name || "Opponent"}</h3>
-            ${oppEloHtml}
-            <p class="mono">Hits: ${oppSummary?.hits ?? 0} · Misses: ${oppSummary?.misses ?? 0}</p>
-            <p class="mono">Ships sunk: ${oppSummary?.shipsSunk ?? 0}</p>
-            <p class="tiny muted">Sunk: ${(oppSummary?.sunkShips || []).join(", ") || "—"}</p>
-          </div>
-        </div>
+        `}
         <div class="hr"></div>
         <div style="display: flex; gap: 10px; justify-content: center;">
           <a class="btn" href="#/lobby">Back to lobby</a>
@@ -604,16 +1098,74 @@ export function renderGame(root, { roomId }) {
     updateStatus(`Opponent disconnected! They have ${data.timeout}s to reconnect or they forfeit...`);
   });
 
+  socket.on("role_change_error", (data) => {
+    updateStatus(data?.message || "Unable to change role.");
+  });
+
+  socket.on("role_changed", (data) => {
+    if (!data?.role) return;
+    setRoomRole(data.role);
+    suppressUnloadRejoin = true;
+    sessionStorage.removeItem(rejoinStorageKey);
+    window.location.reload();
+  });
+
+  if (applyRoleBtn && roleSelect) {
+    applyRoleBtn.addEventListener("click", () => {
+      const nextRole = String(roleSelect.value || "left").toLowerCase();
+      if (!["left", "right", "middle"].includes(nextRole)) return;
+      if (nextRole === viewerRole) {
+        updateStatus("You are already on that role.");
+        return;
+      }
+      socket.emit("set_role", { roomCode: code, role: nextRole });
+    });
+  }
+
+  rejoinBtn.addEventListener("click", () => {
+    if (isCpuMode) return;
+    hasJoined = false;
+    requiresManualRejoin = false;
+    if (socket.connected) {
+      attemptJoin();
+      return;
+    }
+
+    connectSocket()
+      .then(() => {
+        attemptJoin();
+      })
+      .catch((err) => {
+        onConnectError(err);
+      });
+  });
+
   // --- Event Listeners ---
+
+  const onBeforeUnload = () => {
+    if (isCpuMode) return;
+    if (isSpectator) return;
+    if (suppressUnloadRejoin) return;
+    if (gameActive || hasJoined) {
+      persistGameState();
+      sessionStorage.setItem(rejoinStorageKey, "1");
+    }
+  };
+
+  window.addEventListener("beforeunload", onBeforeUnload);
 
   const leaveBtn = el.querySelector(".topbar a.btn");
   leaveBtn.addEventListener("click", (e) => {
+    if (!isCpuMode) {
+      sessionStorage.removeItem(rejoinStorageKey);
+    }
+
     if (gameActive && !isCpuMode) {
       if (!confirm("Leaving now will forfeit the game. Are you sure?")) {
         e.preventDefault();
-      } else {
-        socket.emit("forfeit", { roomCode: code });
+        return;
       }
+      socket.emit("forfeit", { roomCode: code });
     }
   });
 
@@ -943,6 +1495,41 @@ export function renderGame(root, { roomId }) {
     debug.textContent = "CPU placed ships and is ready.";
     updateStatus("Game Started! YOUR TURN. Fire!");
     startTimer();
+
+      // Restore game state if player refreshed during gameplay
+      const savedState = loadGameState(code);
+      if (savedState) {
+        // Restore my board and opponent board shots
+        if (savedState.myGrid) {
+          my.grid = savedState.myGrid;
+          my.render();
+        }
+        if (savedState.oppGrid) {
+          opp.grid = savedState.oppGrid;
+          opp.render();
+        }
+        // Restore stats
+        myHits = savedState.myHits || 0;
+        myMisses = savedState.myMisses || 0;
+        myShipsSunk = savedState.myShipsSunk || 0;
+        hitCountEl.textContent = myHits;
+        missCountEl.textContent = myMisses;
+        // Restore powerups
+        sonarCount = savedState.sonarCount || 0;
+        doubleShotCount = savedState.doubleShotCount || 0;
+        countSonar.textContent = sonarCount;
+        countDoubleShot.textContent = doubleShotCount;
+        // Mark sunk ships
+        if (savedState.sunkShips) {
+          savedState.sunkShips.forEach(shipKey => {
+            const shipEl = el.querySelector(`#enemy-ship-${shipKey}`);
+            if (shipEl) {
+              shipEl.classList.add("sunk");
+            }
+          });
+        }
+        clearGameState(code);
+      }
   }
 
   function fireAtCpu(r, c) {
@@ -1015,6 +1602,19 @@ export function renderGame(root, { roomId }) {
       socket.off("join_error", onJoinError);
       socket.off("connect", onConnect);
       socket.off("connect_error", onConnectError);
+      socket.off("disconnect", onDisconnect);
+      socket.off("reconnected", onReconnected);
+      socket.off("join_success", onJoinSuccess);
+      socket.off("sonar_result");
+      socket.off("double_shot_activated");
+      socket.off("bonus_turn");
+      socket.off("role_change_error");
+      socket.off("role_changed");
+      window.removeEventListener("beforeunload", onBeforeUnload);
+      if (joinRetryTimer) {
+        clearTimeout(joinRetryTimer);
+        joinRetryTimer = null;
+      }
       clearInterval(timerInterval);
     },
     { once: true },

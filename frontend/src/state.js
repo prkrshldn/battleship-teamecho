@@ -61,6 +61,7 @@ function loadSettings() {
 export const state = {
   playerName: localStorage.getItem("bs_playerName") || "",
   roomId: localStorage.getItem("bs_roomId") || "",
+  roomRole: localStorage.getItem("bs_roomRole") || "left",
   matchMode: localStorage.getItem("bs_matchMode") || "local",
   settings: loadSettings(),
 };
@@ -77,6 +78,11 @@ export function setPlayerName(name) {
 export function setRoomId(roomId) {
   state.roomId = roomId;
   localStorage.setItem("bs_roomId", roomId);
+}
+
+export function setRoomRole(role) {
+  state.roomRole = ["left", "right", "middle"].includes(role) ? role : "left";
+  localStorage.setItem("bs_roomRole", state.roomRole);
 }
 
 export function setMatchMode(mode) {

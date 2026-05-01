@@ -5,6 +5,7 @@ import {
   setMatchMode,
   setPlayerName,
   setRoomId,
+  setRoomRole,
   setSettings,
   applyShipPreset,
 } from "../state";
@@ -33,6 +34,7 @@ export function renderLobby(root, options = {}) {
           </div>
           <p>Logged in as: <span id="playerName" style="display:inline-flex; align-items:center; gap:6px; vertical-align:middle;"></span></p>
         </div>
+          <p class="muted" style="margin: 0; text-align: right;">Online now: <strong id="onlineUsersCount">0</strong></p>
       </div>
       <div class="hr"></div>
       <p class="muted" id="lobbyMessage">Welcome to Battleship!</p>
@@ -52,6 +54,7 @@ export function renderLobby(root, options = {}) {
   const cardEl = el.querySelector(".card");
   const settingsBtn = el.querySelector("#settings");
   const playerNameEl = el.querySelector("#playerName");
+  const onlineUsersCountEl = el.querySelector("#onlineUsersCount");
   const lobbyMessage = document.createElement("p");
   lobbyMessage.className = "tiny muted";
   lobbyMessage.style.marginTop = "10px";
@@ -73,6 +76,16 @@ export function renderLobby(root, options = {}) {
       playerNameEl.innerHTML = `${rank.svg} ${name}`;
     }
   };
+
+  const updateOnlineUsersCount = (payload) => {
+    const count = Number(payload?.count);
+    if (!Number.isFinite(count)) return;
+
+    if (onlineUsersCountEl) {
+      onlineUsersCountEl.textContent = String(Math.max(0, Math.floor(count)));
+    }
+  };
+
   updatePlayerName(state.playerName || accountUsername || "Unknown");
 
   const makeCode = () => {
@@ -171,6 +184,13 @@ export function renderLobby(root, options = {}) {
   socket.on("ranked_queue_left", onRankedQueueLeft);
   socket.on("ranked_match_found", onRankedMatchFound);
   socket.on("connect_error", onConnectError);
+  socket.on("online_users_update", updateOnlineUsersCount);
+
+  if (socket.connected) {
+    socket.emit("online_users_request");
+  } else {
+    connectSocket().then(() => socket.emit("online_users_request")).catch(() => {});
+  }
 
   cleanupLobbySocketHandlers = () => {
     stopRankedTimer();
@@ -178,6 +198,7 @@ export function renderLobby(root, options = {}) {
     socket.off("ranked_queue_left", onRankedQueueLeft);
     socket.off("ranked_match_found", onRankedMatchFound);
     socket.off("connect_error", onConnectError);
+    socket.off("online_users_update", updateOnlineUsersCount);
   };
 
   const wireRoomActions = () => {
@@ -187,6 +208,8 @@ export function renderLobby(root, options = {}) {
     const boardSizeSelect = el.querySelector("#boardSize");
     const shipPresetSelect = el.querySelector("#shipPreset");
     const difficultySelect = el.querySelector("#difficulty");
+    const createRoleSelect = el.querySelector("#createRole");
+    const joinRoleSelect = el.querySelector("#joinRole");
 
     if (boardSizeSelect) {
       boardSizeSelect.value = String(state.settings?.boardSize || 10);
@@ -218,6 +241,8 @@ export function renderLobby(root, options = {}) {
           });
         }
 
+        setRoomRole(createRoleSelect?.value || "left");
+
         const code = makeCode();
         setRoomId(code);
         window.location.hash = `#/game/${code}`;
@@ -237,6 +262,8 @@ export function renderLobby(root, options = {}) {
           roomInput.focus();
           return;
         }
+
+        setRoomRole(joinRoleSelect?.value || "left");
         setRoomId(code);
         window.location.hash = `#/game/${code}`;
       });
@@ -268,21 +295,21 @@ export function renderLobby(root, options = {}) {
           <option value="10">10 x 10</option>
           <option value="12">12 x 12</option>
         </select>
-
+        <br>
         <label class="label">Ship count preset</label>
         <select class="input" id="shipPreset">
           <option value="light">Light</option>
           <option value="standard">Standard</option>
           <option value="heavy">Heavy</option>
         </select>
-
+        <br>
         <label class="label">Difficulty</label>
         <select class="input" id="difficulty">
           <option value="easy">Easy</option>
           <option value="normal">Normal</option>
           <option value="hard">Hard</option>
         </select>
-
+        <br>
         <button class="btn" id="create">Create</button>
         <p class="tiny muted">These settings apply to the local room you create.</p>
       </div>
@@ -312,20 +339,21 @@ export function renderLobby(root, options = {}) {
           <option value="10">10 x 10</option>
           <option value="12">12 x 12</option>
         </select>
-
+        <br>
         <label class="label">Ship count preset</label>
         <select class="input" id="shipPreset">
           <option value="light">Light</option>
           <option value="standard">Standard</option>
           <option value="heavy">Heavy</option>
         </select>
-
+        <br>
         <label class="label">Difficulty</label>
         <select class="input" id="difficulty">
           <option value="easy">Easy</option>
           <option value="normal">Normal</option>
           <option value="hard">Hard</option>
         </select>
+        <br>
         <button class="btn" id="createCpu">Start game vs CPU</button>
         <p class="tiny muted">Generates a code and takes you to the game.</p>
         <button class="btn ghost" id="backToLobby" style="margin-top:10px;">Go Back</button>
@@ -348,6 +376,7 @@ export function renderLobby(root, options = {}) {
         }
 
         setMatchMode("cpu");
+        setRoomRole("left");
 
         if (boardSizeSelect && shipPresetSelect && difficultySelect) {
           applyShipPreset(shipPresetSelect.value);
@@ -429,6 +458,7 @@ export function renderLobby(root, options = {}) {
     startRanked.addEventListener("click", async () => {
       try {
         setMatchMode("ranked");
+        setRoomRole("left");
         await connectSocket();
         socket.emit("ranked_queue_join");
       } catch (error) {
@@ -505,6 +535,10 @@ export function renderLobby(root, options = {}) {
     cardEl.style.boxSizing = "border-box";
     cardEl.style.overflow = "hidden";
 
+    const wins = getCurrentUser()?.user_metadata?.wins || 0;
+    const losses = getCurrentUser()?.user_metadata?.losses || 0;
+    const best_elo = getCurrentUser()?.user_metadata?.best_elo || playerCurrentElo;
+
     cardEl.innerHTML = `
       <div style="display: flex; justify-content: space-between; align-items: center;">
         <div class="settings" id="closeSettings" title="Close settings">
@@ -512,11 +546,36 @@ export function renderLobby(root, options = {}) {
         </div>
         <p>Logged in as: <span id="playerNameSettings" style="display:inline-flex; align-items:center; gap:6px; vertical-align:middle;">${getRank(playerCurrentElo).svg} ${state.playerName || accountUsername || "Unknown"}</span></p>
       </div>
-      <div style="padding-top:30px;display:flex;flex-direction:column;gap:12px;height:100%;">
-        <h2 style="margin:0;color:#fff;">Settings</h2>
-        <p class="tiny" style="margin:0;color:#cfcfcf;">Manage your account from here.</p>
-        <button id="logout" class="btn">Logout</button>
-        <button id="changeUsername" class="btn">Change username</button>
+      <div style="padding-top:30px;display:flex;flex-direction:column;gap:12px;height:100%;overflow-y:auto;">
+        <h2 style="margin:0;color:#fff;">Profile</h2>
+        
+        <div style="background: #1a1a1a; border: 1px solid #444; border-radius: 6px; padding: 16px; display:grid; grid-template-columns: 1fr 1fr; gap:12px;">
+          <div style="text-align: center;">
+            <p class="tiny" style="margin: 0 0 4px 0; color:#999;">Wins</p>
+            <p style="margin: 0; font-size: 24px; color: #4ade80; font-weight: bold;">${wins}</p>
+          </div>
+          <div style="text-align: center;">
+            <p class="tiny" style="margin: 0 0 4px 0; color:#999;">Losses</p>
+            <p style="margin: 0; font-size: 24px; color: #f87171; font-weight: bold;">${losses}</p>
+          </div>
+          <div style="text-align: center;">
+            <p class="tiny" style="margin: 0 0 4px 0; color:#999;">Current ELO</p>
+            <p style="margin: 0; font-size: 24px; color: #60a5fa; font-weight: bold;">${getRank(playerCurrentElo).svg} ${playerCurrentElo}</p>
+          </div>
+          <div style="text-align: center;">
+            <p class="tiny" style="margin: 0 0 4px 0; color:#999;">Best ELO</p>
+            <p style="margin: 0; font-size: 24px; color: #fbbf24; font-weight: bold;">${getRank(best_elo).svg} ${best_elo}</p>
+          </div>
+        </div>
+
+        <div style="border-top: 1px solid #444; padding-top: 16px;">
+          <h2 style="margin:0 0 12px 0;color:#fff;">Settings</h2>
+          <p class="tiny" style="margin:0 0 12px 0;color:#cfcfcf;">Manage your account from here.</p>
+          <div style="display: flex; gap: 10px; margin-bottom: 12px;">
+            <button id="changeUsername" class="btn">Change username</button>
+            <button id="logout" class="btn">Logout</button>
+          </div>
+        </div>
       </div>
     `;
 

@@ -123,6 +123,26 @@ export function createBoard({ size = 10, mode = "place" }) {
     }
   }
 
+  function setGrid(nextGrid) {
+    if (!Array.isArray(nextGrid) || nextGrid.length !== size) return;
+    for (let r = 0; r < size; r++) {
+      if (!Array.isArray(nextGrid[r]) || nextGrid[r].length !== size) return;
+      for (let c = 0; c < size; c++) {
+        grid[r][c] = nextGrid[r][c];
+      }
+    }
+    render();
+  }
+
+  function setShips(nextShips) {
+    ships.length = 0;
+    if (Array.isArray(nextShips)) {
+      for (const ship of nextShips) {
+        ships.push(ship);
+      }
+    }
+  }
+
   function onCellClick(fn) {
     clickHandler = fn;
   }
@@ -143,6 +163,8 @@ export function createBoard({ size = 10, mode = "place" }) {
     markShot,
     markSunk,
     markSonar,
+    setGrid,
+    setShips,
     onCellClick,
   };
 }
